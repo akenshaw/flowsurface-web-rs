@@ -216,7 +216,7 @@ impl CanvasManager {
                         }
     
                         if current_kline_open != 0 {
-                            match klines_trades.write() {
+                            match klines_trades.try_write() {
                                 Ok(mut klines_trades) => {
                                     let bucket_size_lock = bucket_size.read().unwrap();
                                     let trade_groups = klines_trades.entry(current_kline_open).or_insert(TradeGroups { buy: HashMap::new(), sell: HashMap::new() });
@@ -229,8 +229,11 @@ impl CanvasManager {
                                         };
                                         *quantity_sum += trade.quantity;
                                     }
-                                    let mut canvas_bubble = canvas_bubble.borrow_mut();
-                                    canvas_bubble.render(&trades_buffer);
+
+                                    if let Some(update_time) = v["data"]["T"].as_u64() {
+                                        let mut canvas_bubble = canvas_bubble.borrow_mut();
+                                        canvas_bubble.render(&trades_buffer, update_time);
+                                    }
                                     trades_buffer.clear();
                                 },
                                 Err(poisoned) => {
@@ -273,7 +276,9 @@ impl CanvasManager {
                                     buy_volume, sell_volume,
                                     close_time,
                                 };
-                                klines_ohlcv.write().unwrap().insert(open_time, kline);
+                                if let Ok(mut klines_ohlcv) = klines_ohlcv.try_write() {
+                                    klines_ohlcv.insert(open_time, kline);  
+                                }
                                 current_kline_open = open_time;
                             }
                         }
@@ -597,12 +602,13 @@ impl CanvasIndicatorVolume {
         }
     }
 }
-
 pub struct CanvasBubbleTrades {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
     trades: Vec<Trade>,
+    sell_trade_counts: BTreeMap<u64, usize>,
+    buy_trade_counts: BTreeMap<u64, usize>,
 }
 impl CanvasBubbleTrades {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -617,27 +623,80 @@ impl CanvasBubbleTrades {
                     width,
                     height,
                     trades: Vec::new(),
+                    sell_trade_counts: BTreeMap::new(),
+                    buy_trade_counts: BTreeMap::new(),
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
             Err(error) => Err(error),
         }
     }
-    pub fn render(&mut self, trades_buffer: &Vec<Trade>) {
+    pub fn render(&mut self, trades_buffer: &Vec<Trade>, last_update: u64) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
 
         let padding_percentage = 0.25; 
         let padded_height = self.height * (1.0 - padding_percentage);
-    
-        let now = js_sys::Date::now() as u64;
-        let thirty_seconds_ago = now - 30 * 1000;
+        let thirty_seconds_ago = last_update - 30 * 1000;
+
+        // Trade counts
+        self.buy_trade_counts.retain(|&time, _| time >= thirty_seconds_ago);
+        self.sell_trade_counts.retain(|&time, _| time >= thirty_seconds_ago);
+
+        let sell_count = trades_buffer.iter()
+            .filter(|trade| trade.is_buyer_maker)
+            .count();
+        self.sell_trade_counts.insert(last_update, sell_count);
+        let buy_count = trades_buffer.iter()
+            .filter(|trade| !trade.is_buyer_maker)
+            .count();
+        self.buy_trade_counts.insert(last_update, buy_count);
+
+        let max_trade_count = self.sell_trade_counts.iter().chain(self.buy_trade_counts.iter())
+            .map(|(_, &count)| count)
+            .fold(0, usize::max);
+        let y_scale = padded_height / max_trade_count as f64;
+
+        context.set_stroke_style(&"rgba(200, 50, 50, 0.4)".into());
+        let mut previous_point: Option<(f64, f64)> = None;
+        for (&time, &count) in self.sell_trade_counts.iter() {
+            let x = ((time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
+            let y = self.height / 2.0 + count as f64 * y_scale;
+            match previous_point {
+                Some((prev_x, prev_y)) => {
+                    context.begin_path();
+                    context.move_to(prev_x, prev_y);
+                    context.line_to(x, y);
+                    context.stroke();
+                },
+                None => (),
+            }
+            previous_point = Some((x, y));
+        }
+        context.set_stroke_style(&"rgba(50, 200, 50, 0.4)".into());
+        previous_point = None;
+        for (&time, &count) in self.buy_trade_counts.iter() {
+            let x = ((time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
+            let y = self.height / 2.0 - count as f64 * y_scale;
+            match previous_point {
+                Some((prev_x, prev_y)) => {
+                    context.begin_path();
+                    context.move_to(prev_x, prev_y);
+                    context.line_to(x, y);
+                    context.stroke();
+                },
+                None => (),
+            }
+            previous_point = Some((x, y));
+        }
+
+        // Bubble trades
+        self.trades.retain(|trade| trade.time >= thirty_seconds_ago);
 
         for trade in trades_buffer {
             self.trades.push(*trade);
         }
-        self.trades.retain(|trade| trade.time >= thirty_seconds_ago);
-    
+        
         let max_quantity = self.trades.iter().map(|trade| trade.quantity).fold(0.0, f64::max);
         let y_min = self.trades.iter().map(|trade| trade.price).fold(f64::MAX, f64::min);
         let y_max = self.trades.iter().map(|trade| trade.price).fold(0.0, f64::max);
@@ -683,7 +742,6 @@ pub async fn get_hist_klines(symbol: &str, interval: &str, limit: f64) -> Result
     let text = JsFuture::from(response.text()?).await?;
     Ok(text)
 }
-
 pub fn group_orders(bucket_size: f64, orders: &Vec<Order>) -> Vec<Order> {
     let mut grouped_orders = HashMap::new();
     for order in orders {
