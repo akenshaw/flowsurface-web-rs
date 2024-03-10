@@ -1,7 +1,10 @@
 mod utils;
 
+use core::time;
 use std::collections::{HashMap, BTreeMap};
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::{Arc, RwLock};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket, Request, RequestInit, Response, window};
@@ -15,6 +18,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
 }
+#[derive(Copy, Clone)]
 pub struct Trade {
     price: f64,
     quantity: f64,
@@ -37,6 +41,7 @@ pub struct Kline {
     sell_volume: f64,
     close_time: u64,
 }
+#[derive(Debug)]
 pub struct TradeGroups {
     buy: HashMap<i64, f64>,
     sell: HashMap<i64, f64>,
@@ -50,13 +55,14 @@ pub struct CanvasManager {
     canvas_main: CanvasMain,
     canvas_orderbook: CanvasOrderbook,
     canvas_indicator_volume: CanvasIndicatorVolume,
+    canvas_bubble: Rc<RefCell<CanvasBubbleTrades>>,
     pan_x_offset: f64,
     x_zoom: f64,
     bucket_size: Arc<RwLock<f64>>
 }
 #[wasm_bindgen]
 impl CanvasManager {
-    pub fn new(canvas1: HtmlCanvasElement, canvas2: HtmlCanvasElement, canvas3: HtmlCanvasElement) -> Self {
+    pub fn new(canvas1: HtmlCanvasElement, canvas2: HtmlCanvasElement, canvas3: HtmlCanvasElement, canvas4: HtmlCanvasElement) -> Self {
         Self {
             klines_ohlcv: Arc::new(RwLock::new(BTreeMap::new())),
             klines_trades: Arc::new(RwLock::new(BTreeMap::new())),
@@ -64,6 +70,7 @@ impl CanvasManager {
             canvas_main: CanvasMain::new(canvas1).expect("Failed to create CanvasMain"),
             canvas_orderbook: CanvasOrderbook::new(canvas2).expect("Failed to create CanvasOrderbook"),
             canvas_indicator_volume: CanvasIndicatorVolume::new(canvas3).expect("Failed to create CanvasIndicatorVolume"),
+            canvas_bubble: Rc::new(RefCell::new(CanvasBubbleTrades::new(canvas4).expect("Failed to create CanvasBubbleTrades"))),
             pan_x_offset: 0.0,
             x_zoom: 30.0,
             bucket_size: Arc::new(RwLock::new(0.5)),
@@ -118,6 +125,8 @@ impl CanvasManager {
         let bids = Arc::clone(&self.orderbook_manager.bids);
         let asks = Arc::clone(&self.orderbook_manager.asks);
         //let last_update_id = Arc::clone(&self.orderbook_manager.last_update_id);
+
+        let canvas_bubble = Rc::clone(&self.canvas_bubble);
 
         let onmessage_callback = Closure::wrap(Box::new(move |event: MessageEvent| {
             if let Ok(data) = event.data().dyn_into::<js_sys::JsString>() {
@@ -214,12 +223,14 @@ impl CanvasManager {
                                     for trade in &trades_buffer {
                                         let price_as_int = ((trade.price / *bucket_size_lock).round() * *bucket_size_lock * 100.0) as i64;
                                         let quantity_sum = if trade.is_buyer_maker {
-                                            trade_groups.buy.entry(price_as_int).or_insert(0.0)
-                                        } else {
                                             trade_groups.sell.entry(price_as_int).or_insert(0.0)
+                                        } else {
+                                            trade_groups.buy.entry(price_as_int).or_insert(0.0)
                                         };
                                         *quantity_sum += trade.quantity;
                                     }
+                                    let mut canvas_bubble = canvas_bubble.borrow_mut();
+                                    canvas_bubble.render(&trades_buffer);
                                     trades_buffer.clear();
                                 },
                                 Err(poisoned) => {
@@ -315,8 +326,13 @@ impl CanvasManager {
                         self.canvas_orderbook.render(y_min, y_max, &grouped_bids, &grouped_asks, &visible_klines);
 
                         match self.klines_trades.try_read() {
-                            Ok(klines_trades_borrowed) => {        
-                                self.canvas_main.render(y_min, y_max, &visible_klines, &klines_trades_borrowed);
+                            Ok(klines_trades_borrowed) => {    
+                                let visible_trades: Vec<_> = klines_trades_borrowed.iter().filter(|&(open_time, _)| {
+                                    let x = ((open_time - time_difference) as f64 / zoom_scale) * self.canvas_main.width;
+                                    x >= left_x as f64 && x <= right_x as f64
+                                }).collect();  
+                                    
+                                self.canvas_main.render(y_min, y_max, &visible_klines, &visible_trades);
                             },
                             Err(e) => {
                                 log(&format!("Failed to acquire lock on klines_trades during render: {}", e));
@@ -459,7 +475,7 @@ impl CanvasMain {
             Err(error) => Err(error),
         }
     }
-    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: &RwLockReadGuard<BTreeMap<u64, TradeGroups>>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: &Vec<(&u64, &TradeGroups)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -497,20 +513,9 @@ impl CanvasMain {
                 context.line_to(x + (rect_width*2.0), self.height - y_low);
                 context.stroke();
 
-                if let Some(trade_groups) = trades.get(&kline.open_time) {
-                    context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
-                    for (price_as_int, quantity) in &trade_groups.buy {
-                        let price = *price_as_int as f64 / 100.0;
-                        let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
-                        let scaled_quantity = rect_width as f64 * quantity / max_quantity;
-
-                        context.begin_path();
-                        context.move_to(x + rect_width - 4.0, self.height - y_trade);
-                        context.line_to(x + rect_width - 4.0 - scaled_quantity, self.height - y_trade);
-                        context.stroke();
-                    }
+                if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| *time == kline.open_time) {
                     context.set_stroke_style(&"rgba(81, 205, 160, 1)".into());
-                    for (price_as_int, quantity) in &trade_groups.sell {
+                    for (price_as_int, quantity) in &trade_groups.buy { 
                         let price = *price_as_int as f64 / 100.0;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
@@ -518,6 +523,17 @@ impl CanvasMain {
                         context.begin_path();
                         context.move_to(x + rect_width + 4.0, self.height - y_trade);
                         context.line_to(x + rect_width + 4.0 + scaled_quantity, self.height - y_trade);
+                        context.stroke();
+                    }
+                    context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
+                    for (price_as_int, quantity) in &trade_groups.sell {
+                        let price = *price_as_int as f64 / 100.0;
+                        let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
+                        let scaled_quantity = rect_width as f64 * quantity / max_quantity;
+
+                        context.begin_path();
+                        context.move_to(x + rect_width - 4.0, self.height - y_trade);
+                        context.line_to(x + rect_width - 4.0 - scaled_quantity, self.height - y_trade);
                         context.stroke();
                     }
                 }
@@ -577,6 +593,80 @@ impl CanvasIndicatorVolume {
             },
             None => {
                 log(&format!("No klines"));
+            }
+        }
+    }
+}
+
+pub struct CanvasBubbleTrades {
+    ctx: CanvasRenderingContext2d,
+    width: f64,
+    height: f64,
+    trades: Vec<Trade>,
+}
+impl CanvasBubbleTrades {
+    pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
+        let width = canvas.width() as f64;
+        let height = canvas.height() as f64;
+
+        match canvas.get_context("2d") {
+            Ok(Some(context)) => {
+                let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                Ok(Self {
+                    ctx,
+                    width,
+                    height,
+                    trades: Vec::new(),
+                })
+            },
+            Ok(None) => Err(JsValue::from_str("No 2D context available")),
+            Err(error) => Err(error),
+        }
+    }
+    pub fn render(&mut self, trades_buffer: &Vec<Trade>) {
+        let context = &self.ctx;
+        context.clear_rect(0.0, 0.0, self.width, self.height);
+
+        let padding_percentage = 0.25; 
+        let padded_height = self.height * (1.0 - padding_percentage);
+    
+        let now = js_sys::Date::now() as u64;
+        let thirty_seconds_ago = now - 30 * 1000;
+
+        for trade in trades_buffer {
+            self.trades.push(*trade);
+        }
+        self.trades.retain(|trade| trade.time >= thirty_seconds_ago);
+    
+        let max_quantity = self.trades.iter().map(|trade| trade.quantity).fold(0.0, f64::max);
+        let y_min = self.trades.iter().map(|trade| trade.price).fold(f64::MAX, f64::min);
+        let y_max = self.trades.iter().map(|trade| trade.price).fold(0.0, f64::max);
+
+        let sell_trades: Vec<_> = self.trades.iter().filter(|trade| trade.is_buyer_maker).collect();
+        let buy_trades: Vec<_> = self.trades.iter().filter(|trade| !trade.is_buyer_maker).collect();
+
+        context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
+        for trade in &sell_trades {
+            let radius = (trade.quantity / max_quantity) * 40.0;       
+            if radius > 1.0 {
+                let x = ((trade.time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
+                let y = ((trade.price - y_min) / (y_max - y_min)) * padded_height + self.height * padding_percentage / 2.0;
+
+                context.begin_path();
+                context.arc(x, self.height - y, radius, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+                context.fill();
+            }
+        }
+        context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
+        for trade in &buy_trades {
+            let radius = (trade.quantity / max_quantity) * 40.0;
+            if radius > 1.0 {
+                let x = ((trade.time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
+                let y = ((trade.price - y_min) / (y_max - y_min)) * padded_height + self.height * padding_percentage / 2.0;
+
+                context.begin_path();
+                context.arc(x, self.height - y, radius, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+                context.fill();
             }
         }
     }
