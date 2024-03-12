@@ -52,6 +52,7 @@ pub struct CanvasManager {
     klines_ohlcv: Arc<RwLock<BTreeMap<u64, Kline>>>,
     klines_trades: Arc<RwLock<BTreeMap<u64, TradeGroups>>>,
     orderbook_manager: OrderbookManager,
+    oi_datapoints: Arc<RwLock<Vec<(u64, f64)>>>,
     canvas_main: CanvasMain,
     canvas_orderbook: CanvasOrderbook,
     canvas_indicator_volume: CanvasIndicatorVolume,
@@ -68,6 +69,7 @@ impl CanvasManager {
             klines_ohlcv: Arc::new(RwLock::new(BTreeMap::new())),
             klines_trades: Arc::new(RwLock::new(BTreeMap::new())),
             orderbook_manager: OrderbookManager::new(),
+            oi_datapoints: Arc::new(RwLock::new(Vec::new())),
             canvas_main: CanvasMain::new(canvas1).expect("Failed to create CanvasMain"),
             canvas_orderbook: CanvasOrderbook::new(canvas2).expect("Failed to create CanvasOrderbook"),
             canvas_indicator_volume: CanvasIndicatorVolume::new(canvas3).expect("Failed to create CanvasIndicatorVolume"),
@@ -350,7 +352,15 @@ impl CanvasManager {
                 let y_min = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length;
 
                 self.canvas_indicator_volume.render(&visible_klines);
-                self.canvas_indi_cvd.render(&visible_klines);
+                
+                match self.oi_datapoints.try_read() {
+                    Ok(oi_datapoints_borrowed) => {
+                        self.canvas_indi_cvd.render(&visible_klines, &oi_datapoints_borrowed);
+                    },
+                    Err(e) => {
+                        log(&format!("Failed to acquire lock on oi_datapoints during render: {}", e));
+                    }
+                }
 
                 match (self.orderbook_manager.bids.try_read(), self.orderbook_manager.asks.try_read()) {
                     (Ok(bids_borrowed), Ok(asks_borrowed)) => {
@@ -392,6 +402,17 @@ impl CanvasManager {
     pub fn fetch_depth(&mut self, depth: JsValue) {
         self.orderbook_manager.fetch_depth(depth);
     }
+    pub fn fetch_oi(&mut self, oi: JsValue) {
+        let oi_obj: serde_json::Value = serde_json::from_str(&oi.as_string().unwrap()).unwrap();
+    
+        let time = oi_obj["time"].as_u64().unwrap();
+        let open_interest = oi_obj["openInterest"].as_str().unwrap().parse::<f64>().unwrap();
+
+        match self.oi_datapoints.try_write() {
+            Ok(mut oi_datapoints) => oi_datapoints.push((time, open_interest)),
+            Err(_) => println!("Failed to acquire write lock on oi_datapoints"),
+        };
+    }    
 }
 pub struct CanvasOrderbook {
     ctx: CanvasRenderingContext2d,
@@ -657,18 +678,18 @@ impl CanvasIndiCVD {
             Err(error) => Err(error),
         }
     }
-    pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>) {
+    pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>, oi_obj: &Vec<(u64, f64)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
     
         let zoom_scale = self.x_zoom * 60.0 * 1000.0;
         
         match klines.iter().last() {
-            Some((last_time, _)) => {
+            Some((kline_last_time, _)) => {
                 let max_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(0.0, f64::max);
                 let min_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(f64::MAX, f64::min);
 
-                let time_difference = *last_time + 60000 - zoom_scale as u64;
+                let time_difference = *kline_last_time + 60000 - zoom_scale as u64;
                 let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
 
                 let mut previous_point: Option<(f64, f64)> = None;
@@ -687,6 +708,34 @@ impl CanvasIndiCVD {
                         None => (),
                     }
                     previous_point = Some((x, y));
+                }
+
+                match oi_obj.iter().last() {
+                    Some((_oi_last_time, _)) => {
+                        let max_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(0.0, f64::max);
+                        let min_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(f64::MAX, f64::min);
+        
+                        let time_difference = *kline_last_time + 60000 - zoom_scale as u64;
+                        let padding_ratio = 0.1; 
+                        let padded_height = self.height as f64 * (1.0 - padding_ratio);
+                        let padding = self.height as f64 * padding_ratio / 2.0;
+            
+                        context.set_fill_style(&"white".into());
+                        for (_i, (time, oi)) in oi_obj.iter().enumerate() {
+                            let x = ((time - time_difference) as f64 / zoom_scale) * self.width;
+                            let y = if max_oi == min_oi {
+                                padded_height / 2.0 + padding
+                            } else {
+                                padded_height * (*oi - min_oi) / (max_oi - min_oi) + padding
+                            };
+                            
+                            context.begin_path();
+                            context.arc(x, self.height - y, 4.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+                            context.fill();
+                        }
+                    },
+                    None => {
+                    }
                 }
             },
             None => {
