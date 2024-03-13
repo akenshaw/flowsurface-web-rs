@@ -83,40 +83,6 @@ impl CanvasManager {
     
     pub async fn initialize_ws(&mut self) {  
         self.start_websocket();
-        
-        let mut cum_volume_delta = 0.0;
-        let mut klines_ohlcv = self.klines_ohlcv.try_write().unwrap();
-        if (klines_ohlcv.len() as f64) < 60.0 {
-            let limit = 60.0 - klines_ohlcv.len() as f64;
-            match get_hist_klines("btcusdt", "1m", limit).await {
-                Ok(klines) => {
-                    let klines: Vec<Vec<serde_json::Value>> = serde_json::from_str(&klines.as_string().unwrap()).unwrap();
-                    for kline in klines {
-                        let open_time = kline[0].as_u64().unwrap();
-                        let open = kline[1].as_str().unwrap().parse::<f64>().unwrap();
-                        let high = kline[2].as_str().unwrap().parse::<f64>().unwrap();
-                        let low = kline[3].as_str().unwrap().parse::<f64>().unwrap();
-                        let close = kline[4].as_str().unwrap().parse::<f64>().unwrap();
-                        let volume = kline[5].as_str().unwrap().parse::<f64>().unwrap();
-                        let close_time = kline[6].as_u64().unwrap();
-                        let buy_volume = kline[9].as_str().unwrap().parse::<f64>().unwrap();
-                        let sell_volume = volume - buy_volume;
-                        cum_volume_delta += buy_volume - sell_volume;
-                        let kline = Kline {
-                            open_time, 
-                            open, high, low, close, 
-                            buy_volume, sell_volume, 
-                            cum_volume_delta,
-                            close_time,
-                        };
-                        klines_ohlcv.insert(open_time, kline);
-                    }
-                },
-                Err(e) => {
-                    log(&format!("Failed to fetch klines: {:?}", e));
-                }
-            }
-        }
     }
    
     pub fn start_websocket(&mut self) {
@@ -403,15 +369,86 @@ impl CanvasManager {
         self.orderbook_manager.fetch_depth(depth);
     }
     pub fn fetch_oi(&mut self, oi: JsValue) {
-        let oi_obj: serde_json::Value = serde_json::from_str(&oi.as_string().unwrap()).unwrap();
-    
-        let time = oi_obj["time"].as_u64().unwrap();
-        let open_interest = oi_obj["openInterest"].as_str().unwrap().parse::<f64>().unwrap();
-
-        match self.oi_datapoints.try_write() {
-            Ok(mut oi_datapoints) => oi_datapoints.push((time, open_interest)),
-            Err(_) => println!("Failed to acquire write lock on oi_datapoints"),
-        };
+        if let Some(oi_str) = oi.as_string() {
+            match serde_json::from_str::<serde_json::Value>(&oi_str) {
+                Ok(oi_obj) => {
+                    if let (Some(time), Some(open_interest_str)) = (oi_obj["time"].as_u64(), oi_obj["openInterest"].as_str()) {
+                        if let Ok(open_interest) = open_interest_str.parse::<f64>() {
+                            match self.oi_datapoints.try_write() {
+                                Ok(mut oi_datapoints) => oi_datapoints.push((time, open_interest)),
+                                Err(_) => println!("Failed to acquire write lock on oi_datapoints"),
+                            };
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to parse oi: {}", e);
+                }
+            }
+        }
+    }
+    pub fn fetch_hist_oi(&mut self, hist_ois: JsValue) {
+        if let Some(hist_ois_str) = hist_ois.as_string() {
+            match serde_json::from_str::<Vec<serde_json::Value>>(&hist_ois_str) {
+                Ok(hist_ois) => {
+                    for hist_oi in hist_ois {
+                        if let (Some(time), Some(open_interest_str)) = (hist_oi["timestamp"].as_u64(), hist_oi["sumOpenInterest"].as_str()) {
+                            if let Ok(open_interest) = open_interest_str.parse::<f64>() {
+                                match self.oi_datapoints.try_write() {
+                                    Ok(mut oi_datapoints) => oi_datapoints.push((time, open_interest)),
+                                    Err(_) => println!("Failed to acquire write lock on oi_datapoints"),
+                                };
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to parse hist_ois: {}", e);
+                }
+            }
+        }
+    }       
+    pub fn fetch_klines(&mut self, klines: JsValue) {
+        if let Some(klines_str) = klines.as_string() {
+            match serde_json::from_str::<Vec<Vec<serde_json::Value>>>(&klines_str) {
+                Ok(klines) => {
+                    if let Ok(mut klines_ohlcv) = self.klines_ohlcv.try_write() {
+                        let mut cum_volume_delta = 0.0;
+                        for kline in klines {
+                            if let (
+                                Some(open_time), 
+                                Some(open_str), Some(high_str), Some(low_str), Some(close_str), 
+                                Some(volume_str), Some(close_time), Some(buy_volume_str)) = 
+                                (
+                                    kline[0].as_u64(), 
+                                    kline[1].as_str(), kline[2].as_str(), kline[3].as_str(), kline[4].as_str(), 
+                                    kline[5].as_str(), kline[6].as_u64(), kline[9].as_str()
+                                ) {
+                                if let (Ok(open), Ok(high), Ok(low), Ok(close), Ok(volume), Ok(buy_volume)) = 
+                                    (
+                                        open_str.parse::<f64>(), high_str.parse::<f64>(), low_str.parse::<f64>(), close_str.parse::<f64>(), 
+                                        volume_str.parse::<f64>(), buy_volume_str.parse::<f64>()
+                                    ) {
+                                    let sell_volume = volume - buy_volume;
+                                    cum_volume_delta += buy_volume - sell_volume;
+                                    let kline = Kline {
+                                        open_time, 
+                                        open, high, low, close, 
+                                        buy_volume, sell_volume, 
+                                        cum_volume_delta,
+                                        close_time,
+                                    };
+                                    klines_ohlcv.insert(open_time, kline);
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to parse klines: {}", e);
+                }
+            }
+        }
     }    
 }
 pub struct CanvasOrderbook {
@@ -797,13 +834,13 @@ impl CanvasBubbleTrades {
         let max_trade_count = self.sell_trade_counts.iter().chain(self.buy_trade_counts.iter())
             .map(|(_, &count)| count)
             .fold(0, usize::max);
-        let y_scale = padded_height / max_trade_count as f64;
+        let y_scale = padded_height / (2 * max_trade_count) as f64;
 
         context.set_stroke_style(&"rgba(200, 50, 50, 0.4)".into());
         let mut previous_point: Option<(f64, f64)> = None;
         for (&time, &count) in self.sell_trade_counts.iter() {
             let x = ((time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
-            let y = self.height / 2.0 + count as f64 * y_scale;
+            let y = self.height * padding_percentage / 2.0 + padded_height / 2.0 + count as f64 * y_scale;
             match previous_point {
                 Some((prev_x, prev_y)) => {
                     context.begin_path();
@@ -819,7 +856,7 @@ impl CanvasBubbleTrades {
         previous_point = None;
         for (&time, &count) in self.buy_trade_counts.iter() {
             let x = ((time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
-            let y = self.height / 2.0 - count as f64 * y_scale;
+            let y = self.height * padding_percentage / 2.0 + padded_height / 2.0 - count as f64 * y_scale;
             match previous_point {
                 Some((prev_x, prev_y)) => {
                     context.begin_path();
@@ -874,17 +911,6 @@ impl CanvasBubbleTrades {
     }
 }
 
-pub async fn get_hist_klines(symbol: &str, interval: &str, limit: f64) -> Result<JsValue, JsValue> {
-    let window = window().expect("no global `window` exists");
-    let url = format!("https://fapi.binance.com/fapi/v1/klines?symbol={}&interval={}&limit={}", symbol, interval, limit); 
-    let request = Request::new_with_str_and_init(&url, &RequestInit::new())?;
-
-    let response = JsFuture::from(window.fetch_with_request(&request)).await?;
-    let response: Response = response.dyn_into()?;
-
-    let text = JsFuture::from(response.text()?).await?;
-    Ok(text)
-}
 pub fn group_orders(bucket_size: f64, orders: &Vec<Order>) -> Vec<Order> {
     let mut grouped_orders = HashMap::new();
     for order in orders {
@@ -913,30 +939,42 @@ impl OrderbookManager {
         }
     }
     pub fn fetch_depth(&mut self, depth: JsValue) {
-        let depth: serde_json::Value = serde_json::from_str(&depth.as_string().unwrap()).unwrap();
-        if let Some(bids_array) = depth["bids"].as_array() {
-            if let Ok(mut bids_borrowed) = self.bids.try_write() {
-                *bids_borrowed = bids_array.iter().filter_map(|x| {
-                    x[0].as_str().and_then(|price_str| price_str.parse::<f64>().ok())
-                        .and_then(|price| x[1].as_str().and_then(|quantity_str| quantity_str.parse::<f64>().ok())
-                        .map(|quantity| Some(Order { price, quantity })).flatten())
-                }).collect();
-            } else {
-                log(&format!("bids locked on render"));
-            }
-        }     
-        if let Some(asks_array) = depth["asks"].as_array() {
-            if let Ok(mut asks_borrowed) = self.asks.try_write() {
-                *asks_borrowed = asks_array.iter().filter_map(|x| {
-                    x[0].as_str().and_then(|price_str| price_str.parse::<f64>().ok())
-                        .and_then(|price| x[1].as_str().and_then(|quantity_str| quantity_str.parse::<f64>().ok())
-                        .map(|quantity| Some(Order { price, quantity })).flatten())
-                }).collect();
-            } else {
-                log(&format!("asks locked on render"));
+        if let Some(depth_str) = depth.as_string() {
+            match serde_json::from_str::<serde_json::Value>(&depth_str) {
+                Ok(depth) => {
+                    if let Some(bids_array) = depth["bids"].as_array() {
+                        if let Ok(mut bids_borrowed) = self.bids.try_write() {
+                            *bids_borrowed = bids_array.iter().filter_map(|x| {
+                                x[0].as_str().and_then(|price_str| price_str.parse::<f64>().ok())
+                                    .and_then(|price| x[1].as_str().and_then(|quantity_str| quantity_str.parse::<f64>().ok())
+                                    .map(|quantity| Some(Order { price, quantity })).flatten())
+                            }).collect();
+                        } else {
+                            log(&format!("bids locked on render"));
+                        }
+                    }     
+                    if let Some(asks_array) = depth["asks"].as_array() {
+                        if let Ok(mut asks_borrowed) = self.asks.try_write() {
+                            *asks_borrowed = asks_array.iter().filter_map(|x| {
+                                x[0].as_str().and_then(|price_str| price_str.parse::<f64>().ok())
+                                    .and_then(|price| x[1].as_str().and_then(|quantity_str| quantity_str.parse::<f64>().ok())
+                                    .map(|quantity| Some(Order { price, quantity })).flatten())
+                            }).collect();
+                        } else {
+                            log(&format!("asks locked on render"));
+                        }
+                    }
+
+                    if let Ok(mut last_update_id) = self.last_update_id.write() {
+                        if let Some(last_update_id_val) = depth["lastUpdateId"].as_u64() {
+                            *last_update_id = last_update_id_val;
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to parse depth: {}", e);
+                }
             }
         }
-        let mut last_update_id = self.last_update_id.write().unwrap();
-        *last_update_id = depth["lastUpdateId"].as_u64().unwrap();
     }
 }
