@@ -6,9 +6,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use wasm_bindgen::{JsCast, prelude::*};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket, Request, RequestInit, Response, window};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket};
 use serde_json::Value;
-use wasm_bindgen_futures::JsFuture;
 
 extern crate js_sys;
 
@@ -295,18 +294,18 @@ impl CanvasManager {
     pub fn render(&mut self) {
         match self.klines_ohlcv.try_read() {
             Ok(klines_borrowed) => {
-                let zoom_scale = self.x_zoom * 60.0 * 1000.0;
-                let last_time = match klines_borrowed.iter().last() {
-                    Some((last_time, _)) => *last_time,
+                let last_kline_open: u64 = match klines_borrowed.iter().last() {
+                    Some((last_kline_open, _)) => *last_kline_open,
                     None => return, 
                 };
-                let time_difference = last_time + 60000 - zoom_scale as u64;
+                let zoom_scale: f64 = self.x_zoom * 60.0 * 1000.0;
+                let time_difference: f64 = last_kline_open as f64 + 60000.0 - zoom_scale;
 
-                let left_x = 0 - self.pan_x_offset as i64;
-                let right_x = self.canvas_main.width as i64 - self.pan_x_offset as i64;
+                let left_x: f64 = 0.0 - self.pan_x_offset;
+                let right_x: f64 = self.canvas_main.width - self.pan_x_offset;
 
                 let visible_klines: Vec<_> = klines_borrowed.iter().filter(|&(open_time, _)| {
-                    let x = ((open_time - time_difference) as f64 / zoom_scale) * self.canvas_main.width;
+                    let x: f64 = ((*open_time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
                     x >= left_x as f64 && x <= right_x as f64
                 }).collect();
 
@@ -314,8 +313,8 @@ impl CanvasManager {
                     .map(|(_, kline)| (kline.close - kline.open).abs())
                     .sum::<f64>() / visible_klines.len() as f64;
 
-                let y_max = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
-                let y_min = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length;
+                let y_max: f64 = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
+                let y_min: f64 = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length;
 
                 self.canvas_indicator_volume.render(&visible_klines);
                 
@@ -340,7 +339,7 @@ impl CanvasManager {
                         match self.klines_trades.try_read() {
                             Ok(klines_trades_borrowed) => {    
                                 let visible_trades: Vec<_> = klines_trades_borrowed.iter().filter(|&(open_time, _)| {
-                                    let x = ((open_time - time_difference) as f64 / zoom_scale) * self.canvas_main.width;
+                                    let x: f64 = ((*open_time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
                                     x >= left_x as f64 && x <= right_x as f64
                                 }).collect();  
                                     
@@ -363,6 +362,16 @@ impl CanvasManager {
                 log(&format!("Failed to acquire lock on klines during render: {}", e));
             }
         }
+    }
+
+    pub fn pan_x(&mut self, x: f64) {
+        self.pan_x_offset += x;
+        if self.pan_x_offset < 0.0 {
+            self.pan_x_offset = 0.0;
+        }
+        self.canvas_main.pan_x_offset = self.pan_x_offset;
+        self.canvas_indi_cvd.pan_x_offset = self.pan_x_offset;
+        self.canvas_indicator_volume.pan_x_offset = self.pan_x_offset;
     }
 
     pub fn fetch_depth(&mut self, depth: JsValue) {
@@ -450,6 +459,15 @@ impl CanvasManager {
             }
         }
     }    
+    pub fn get_kline_ohlcv_keys(&self) -> Vec<u64> {
+        match self.klines_ohlcv.try_read() {
+            Ok(klines_borrowed) => klines_borrowed.keys().cloned().collect(),
+            Err(e) => {
+                log(&format!("Failed to acquire lock on klines_ohlcv during get_kline_ohlcv_keys: {}", e));
+                Vec::new()
+            }
+        }
+    }
 }
 pub struct CanvasOrderbook {
     ctx: CanvasRenderingContext2d,
@@ -548,6 +566,7 @@ pub struct CanvasMain {
     width: f64,
     height: f64,
     x_zoom: f64,
+    pan_x_offset: f64,
 }
 impl CanvasMain {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -562,6 +581,7 @@ impl CanvasMain {
                     width,
                     height,
                     x_zoom: 30.0,
+                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -572,11 +592,10 @@ impl CanvasMain {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
 
-        let zoom_scale = self.x_zoom * 60.0 * 1000.0;
-
-        if let Some((last_time, _)) = klines.iter().last() {
-            let time_difference = *last_time + 60000 - zoom_scale as u64;
-            let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
+        if let Some((last_kline_open, _)) = klines.iter().last() {
+            let zoom_scale = self.x_zoom * 60.0 * 1000.0;
+            let time_difference: f64 = **last_kline_open as f64 + 60000.0 - zoom_scale;
+            let rect_width: f64 = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
             
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
                 trade_groups.buy.iter().chain(trade_groups.sell.iter()).map(|(_, quantity)| *quantity)
@@ -584,7 +603,7 @@ impl CanvasMain {
     
             context.set_line_width(1.0);
             for (_i, (_, kline)) in klines.iter().enumerate() {
-                let x = ((kline.open_time - time_difference) as f64 / zoom_scale) * self.width;
+                let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
 
                 let y_open = self.height as f64 * (kline.open - y_min) / (y_max - y_min);
                 let y_close = self.height as f64 * (kline.close - y_min) / (y_max - y_min);
@@ -639,6 +658,7 @@ pub struct CanvasIndicatorVolume {
     width: f64,
     height: f64,
     x_zoom: f64,
+    pan_x_offset: f64,
 }
 impl CanvasIndicatorVolume {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -653,6 +673,7 @@ impl CanvasIndicatorVolume {
                     width,
                     height,
                     x_zoom: 30.0,
+                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -664,15 +685,15 @@ impl CanvasIndicatorVolume {
         context.clear_rect(0.0, 0.0, self.width, self.height);
         
         let zoom_scale = self.x_zoom * 60.0 * 1000.0;
+        let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
 
         match klines.iter().last() {
-            Some((last_time, _)) => {
+            Some((last_kline_open, _)) => {
                 let max_volume = klines.iter().map(|(_, kline)| f64::max(kline.buy_volume, kline.sell_volume)).fold(0.0, f64::max);
-                let time_difference = *last_time + 60000 - zoom_scale as u64;
-                let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
-      
+                let time_difference = **last_kline_open as f64 + 60000.0 - zoom_scale;
+
                 for (_i, (_, kline)) in klines.iter().enumerate() {
-                    let x = ((kline.open_time - time_difference) as f64 / zoom_scale) * self.width;
+                    let x = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
                 
                     let buy_height = self.height as f64 * (kline.buy_volume / max_volume);
                     let sell_height = self.height as f64 * (kline.sell_volume / max_volume);
@@ -695,6 +716,7 @@ pub struct CanvasIndiCVD {
     width: f64,
     height: f64,
     x_zoom: f64,
+    pan_x_offset: f64,
 }
 impl CanvasIndiCVD {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -709,6 +731,7 @@ impl CanvasIndiCVD {
                     width,
                     height,
                     x_zoom: 30.0,
+                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -722,11 +745,11 @@ impl CanvasIndiCVD {
         let zoom_scale = self.x_zoom * 60.0 * 1000.0;
         
         match klines.iter().last() {
-            Some((kline_last_time, _)) => {
+            Some((last_kline_open, _)) => {
                 let max_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(0.0, f64::max);
                 let min_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(f64::MAX, f64::min);
 
-                let time_difference = *kline_last_time + 60000 - zoom_scale as u64;
+                let time_difference = *last_kline_open + 60000 - zoom_scale as u64;
                 let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
 
                 let mut previous_point: Option<(f64, f64)> = None;
@@ -752,7 +775,7 @@ impl CanvasIndiCVD {
                         let max_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(0.0, f64::max);
                         let min_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(f64::MAX, f64::min);
         
-                        let time_difference = *kline_last_time + 60000 - zoom_scale as u64;
+                        let time_difference = *last_kline_open + 60000 - zoom_scale as u64;
                         let padding_ratio = 0.1; 
                         let padded_height = self.height as f64 * (1.0 - padding_ratio);
                         let padding = self.height as f64 * padding_ratio / 2.0;
@@ -877,7 +900,7 @@ impl CanvasBubbleTrades {
         }
         
         let max_quantity = self.trades.iter().map(|trade| trade.quantity).fold(0.0, f64::max);
-        let max_radius = 30.0;
+        let max_radius = 35.0;
         let y_min = self.trades.iter().map(|trade| trade.price).fold(f64::MAX, f64::min);
         let y_max = self.trades.iter().map(|trade| trade.price).fold(0.0, f64::max);
 
