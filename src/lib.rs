@@ -108,14 +108,6 @@ impl CanvasManager {
                 let data_str: String = data.into();
                 let v: Value = serde_json::from_str(&data_str).unwrap();
 
-                let event = match web_sys::CustomEvent::new("renderEvent") {
-                    Ok(event) => event,
-                    Err(error) => {
-                        log(&format!("Failed to create custom event: {:?}", error));
-                        return;
-                    }
-                };
-
                 match v["stream"].as_str() {
                     Some(stream) if stream.contains("aggTrade") => {
                         if let (Some(price), Some(quantity), Some(time), Some(is_buyer_maker)) = 
@@ -219,14 +211,6 @@ impl CanvasManager {
                                 }
                             }
                         }
-                        //match web_sys::window() {
-                        //    Some(window) => {
-                        //        if let Err(error) = window.dispatch_event(&event) {
-                        //            log(&format!("Failed to dispatch event: {:?}", error));
-                        //        }
-                        //    },
-                        //    None => log("No window available"),
-                        //}
                     },
                     Some(stream) if stream.contains("kline") => {
                         if let Some(kline_data) = v["data"]["k"].as_object() {
@@ -326,7 +310,11 @@ impl CanvasManager {
                 
                 match self.oi_datapoints.try_read() {
                     Ok(oi_datapoints_borrowed) => {
-                        self.canvas_indi_cvd.render(&visible_klines, &oi_datapoints_borrowed);
+                        let visible_oi_datapoints: Vec<_> = oi_datapoints_borrowed.iter().filter(|&(time, _)| {
+                            let x: f64 = ((*time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
+                            x >= left_x as f64 && x <= right_x as f64
+                        }).collect();
+                        self.canvas_indi_cvd.render(&visible_klines, &visible_oi_datapoints);
                     },
                     Err(e) => {
                         log(&format!("Failed to acquire lock on oi_datapoints during render: {}", e));
@@ -570,7 +558,7 @@ impl CanvasOrderbook {
                 context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             }
             let rect_y = self.height - y - 40.0;
-            context.fill_rect(6.0, rect_y + 20.0, 90.0, 50.0); 
+            context.fill_rect(3.0, rect_y + 20.0, 90.0, 50.0); 
 
             context.set_fill_style(&"black".into());
             context.fill_text(&y_value_str, 6.0, self.height - y).unwrap();
@@ -767,7 +755,7 @@ impl CanvasIndiCVD {
             Err(error) => Err(error),
         }
     }
-    pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>, oi_obj: &Vec<(u64, f64)>) {
+    pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>, oi_obj: &Vec<&(u64, f64)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
     
