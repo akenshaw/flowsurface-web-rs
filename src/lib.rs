@@ -59,7 +59,8 @@ pub struct CanvasManager {
     canvas_indi_cvd: CanvasIndiCVD,
     pan_x_offset: f64,
     x_zoom: f64,
-    bucket_size: Arc<RwLock<f64>>
+    bucket_size: Arc<RwLock<f64>>,
+    last_depth_update: Rc<RefCell<u64>>
 }
 #[wasm_bindgen]
 impl CanvasManager {
@@ -77,6 +78,7 @@ impl CanvasManager {
             pan_x_offset: 0.0,
             x_zoom: 30.0,
             bucket_size: Arc::new(RwLock::new(1.0)),
+            last_depth_update: Rc::new(RefCell::new(0))
         }
     }
     
@@ -97,6 +99,7 @@ impl CanvasManager {
         let bids = Arc::clone(&self.orderbook_manager.bids);
         let asks = Arc::clone(&self.orderbook_manager.asks);
         //let last_update_id = Arc::clone(&self.orderbook_manager.last_update_id);
+        let last_depth_update = Rc::clone(&self.last_depth_update);
 
         let canvas_bubble = Rc::clone(&self.canvas_bubble);
 
@@ -186,6 +189,9 @@ impl CanvasManager {
                                 log(&format!("asks locked on render"));
                             }
                         }
+                        if let Some(update_id) = v["data"]["T"].as_u64() {
+                            *last_depth_update.borrow_mut() = update_id;
+                        }
     
                         if current_kline_open != 0 {
                             match klines_trades.try_write() {
@@ -213,14 +219,14 @@ impl CanvasManager {
                                 }
                             }
                         }
-                        match web_sys::window() {
-                            Some(window) => {
-                                if let Err(error) = window.dispatch_event(&event) {
-                                    log(&format!("Failed to dispatch event: {:?}", error));
-                                }
-                            },
-                            None => log("No window available"),
-                        }
+                        //match web_sys::window() {
+                        //    Some(window) => {
+                        //        if let Err(error) = window.dispatch_event(&event) {
+                        //            log(&format!("Failed to dispatch event: {:?}", error));
+                        //        }
+                        //    },
+                        //    None => log("No window available"),
+                        //}
                     },
                     Some(stream) if stream.contains("kline") => {
                         if let Some(kline_data) = v["data"]["k"].as_object() {
@@ -334,7 +340,7 @@ impl CanvasManager {
                         let grouped_bids = group_orders(*bucket_size, &bids_borrowed);
                         let grouped_asks = group_orders(*bucket_size, &asks_borrowed);
 
-                        self.canvas_orderbook.render(y_min, y_max, &grouped_bids, &grouped_asks, &visible_klines);
+                        self.canvas_orderbook.render(y_min, y_max, &grouped_bids, &grouped_asks, &visible_klines, &self.last_depth_update);
 
                         match self.klines_trades.try_read() {
                             Ok(klines_trades_borrowed) => {    
@@ -493,7 +499,7 @@ impl CanvasOrderbook {
         }
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, bids: &Vec<Order>, asks: &Vec<Order>, klines: &Vec<(&u64, &Kline)>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, bids: &Vec<Order>, asks: &Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>) {
         let context = &self.ctx;
         self.ctx.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -549,11 +555,20 @@ impl CanvasOrderbook {
             } else {
                 context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             }
-            let rect_y = self.height - y - 20.0; 
-            context.fill_rect(6.0, rect_y, 90.0, 30.0);
-            
+            let rect_y = self.height - y - 40.0;
+            context.fill_rect(6.0, rect_y + 20.0, 90.0, 50.0); 
+
             context.set_fill_style(&"black".into());
             context.fill_text(&y_value_str, 6.0, self.height - y).unwrap();
+
+            let time_left = if kline.close_time < *last_depth_update.borrow() {
+                0
+            } else {
+                (kline.close_time - *last_depth_update.borrow()) / 1000
+            };
+            let time_left_str = format!("{:02}:{:02}", time_left / 60, time_left % 60);
+            context.set_font("100 16px monospace");
+            context.fill_text(&time_left_str, 6.0, self.height - y + 20.0).unwrap(); 
         });
         let max_quantity_str = format!("{:.1}", max_quantity);
         context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
@@ -595,7 +610,7 @@ impl CanvasMain {
         if let Some((last_kline_open, _)) = klines.iter().last() {
             let zoom_scale = self.x_zoom * 60.0 * 1000.0;
             let time_difference: f64 = **last_kline_open as f64 + 60000.0 - zoom_scale;
-            let rect_width: f64 = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
+            let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
             
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
                 trade_groups.buy.iter().chain(trade_groups.sell.iter()).map(|(_, quantity)| *quantity)
@@ -610,7 +625,7 @@ impl CanvasMain {
                 let y_high = self.height as f64 * (kline.high - y_min) / (y_max - y_min);
                 let y_low = self.height as f64 * (kline.low - y_min) / (y_max - y_min);
 
-                context.set_stroke_style(&(if kline.open < kline.close { "green" } else { "red" }).into());
+                context.set_stroke_style(&(if kline.open < kline.close { "rgba(50, 200, 50, 1)" } else { "rgba(200, 50, 50, 1)" }).into());
                 context.begin_path();
                 context.move_to(x + rect_width, self.height - y_open);
                 context.line_to(x + rect_width, self.height - y_close);
@@ -685,7 +700,7 @@ impl CanvasIndicatorVolume {
         context.clear_rect(0.0, 0.0, self.width, self.height);
         
         let zoom_scale = self.x_zoom * 60.0 * 1000.0;
-        let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
+        let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
 
         match klines.iter().last() {
             Some((last_kline_open, _)) => {
@@ -699,10 +714,10 @@ impl CanvasIndicatorVolume {
                     let sell_height = self.height as f64 * (kline.sell_volume / max_volume);
                 
                     context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
-                    context.fill_rect(x + rect_width, self.height as f64 - buy_height, rect_width, buy_height);
+                    context.fill_rect(x + rect_width, self.height as f64 - buy_height, rect_width - 10.0, buy_height);
                 
                     context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
-                    context.fill_rect(x, self.height as f64 - sell_height, rect_width, sell_height);
+                    context.fill_rect(x + 10.0, self.height as f64 - sell_height, rect_width - 10.0, sell_height);
                 }
             },
             None => {
@@ -750,7 +765,7 @@ impl CanvasIndiCVD {
                 let min_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(f64::MAX, f64::min);
 
                 let time_difference = *last_kline_open + 60000 - zoom_scale as u64;
-                let rect_width = (self.width as f64 / (&self.x_zoom/2.0)) / 5.0;
+                let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
 
                 let mut previous_point: Option<(f64, f64)> = None;
                 context.set_stroke_style(&"rgba(238, 216, 139, 0.4)".into());
