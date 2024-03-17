@@ -371,7 +371,7 @@ impl CanvasManager {
     }
 
     pub fn pan_x(&mut self, x: f64) {
-        self.pan_x_offset += x;
+        self.pan_x_offset += x * 1.5;
         if self.pan_x_offset < 0.0 {
             self.pan_x_offset = 0.0;
         }
@@ -379,6 +379,20 @@ impl CanvasManager {
         self.canvas_indi_cvd.pan_x_offset = self.pan_x_offset;
         self.canvas_indicator_volume.pan_x_offset = self.pan_x_offset;
     }
+    pub fn zoom_x(&mut self, x: f64) {
+        let factor = if x > 0.0 { 0.9 } else { 1.1 };
+        self.x_zoom *= factor;
+        self.x_zoom = self.x_zoom.round(); 
+        if self.x_zoom < 3.0 {
+            self.x_zoom = 3.0;
+        }
+        if self.x_zoom > 40.0 {
+            self.x_zoom = 40.0;
+        }
+        self.canvas_main.x_zoom = self.x_zoom;
+        self.canvas_indi_cvd.x_zoom = self.x_zoom;
+        self.canvas_indicator_volume.x_zoom = self.x_zoom;
+    }    
 
     pub fn fetch_depth(&mut self, depth: JsValue) {
         self.orderbook_manager.fetch_depth(depth);
