@@ -4,6 +4,7 @@ use std::collections::{HashMap, BTreeMap};
 use std::sync::{Arc, RwLock};
 use std::cell::RefCell;
 use std::rc::Rc;
+use serde::Deserialize;
 
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket};
@@ -16,7 +17,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
 }
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct Trade {
     price: f64,
     quantity: f64,
@@ -404,7 +405,7 @@ impl CanvasManager {
             }
         }
     }
-    pub fn fetch_hist_oi(&mut self, hist_ois: JsValue) {
+    pub fn gather_hist_oi(&mut self, hist_ois: JsValue) {
         if let Some(hist_ois_str) = hist_ois.as_string() {
             match serde_json::from_str::<Vec<serde_json::Value>>(&hist_ois_str) {
                 Ok(hist_ois) => {
@@ -473,6 +474,47 @@ impl CanvasManager {
             Err(e) => {
                 log(&format!("Failed to acquire lock on klines_ohlcv during get_kline_ohlcv_keys: {}", e));
                 Vec::new()
+            }
+        }
+    }
+    pub fn concat_hist_trades(&mut self, hist_trades: JsValue, i: String) {
+        let i = match i.parse::<u64>() {
+            Ok(val) => val,
+            Err(_) => {
+                log("Failed to parse i as u64");
+                return;
+            }
+        };
+        if let Some(hist_trades_str) = hist_trades.as_string() {
+            match serde_json::from_str::<Vec<Trade>>(&hist_trades_str) {
+                Ok(hist_trades) => {
+                    log(&format!("{}", i));
+                    match self.klines_trades.try_write() {
+                        Ok(mut klines_trades) => {
+                            let bucket_size_lock = self.bucket_size.read().unwrap();
+                            let trade_groups = klines_trades.entry(i as u64).or_insert(TradeGroups { buy: HashMap::new(), sell: HashMap::new() });
+                            for trade in &hist_trades {
+                                let price_as_int = ((trade.price / *bucket_size_lock).round() * *bucket_size_lock * 100.0) as i64;
+                                let quantity_sum = if trade.is_buyer_maker {
+                                    trade_groups.sell.entry(price_as_int).or_insert(0.0)
+                                } else {
+                                    trade_groups.buy.entry(price_as_int).or_insert(0.0)
+                                };
+                                *quantity_sum += trade.quantity;
+                            }
+                            // log keys in klines_trades and how many entries are in each
+                            //for (k, v) in klines_trades.iter() {
+                            //    log(&format!("{}: {}", k, v.buy.len() + v.sell.len()));
+                            //}
+                        },
+                        Err(poisoned) => {
+                            log(&format!("klines_trades locked on render: {:?}", poisoned));
+                        }
+                    }
+                },
+                Err(e) => {
+                    log(&format!("Failed to parse hist_trades: {}", e));
+                }
             }
         }
     }
