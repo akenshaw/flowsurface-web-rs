@@ -61,7 +61,8 @@ pub struct CanvasManager {
     pan_x_offset: f64,
     x_zoom: f64,
     bucket_size: Arc<RwLock<f64>>,
-    last_depth_update: Rc<RefCell<u64>>
+    last_depth_update: Rc<RefCell<u64>>,
+    websocket: Option<WebSocket>,
 }
 #[wasm_bindgen]
 impl CanvasManager {
@@ -79,24 +80,22 @@ impl CanvasManager {
             pan_x_offset: 0.0,
             x_zoom: 30.0,
             bucket_size: Arc::new(RwLock::new(1.0)),
-            last_depth_update: Rc::new(RefCell::new(0))
+            last_depth_update: Rc::new(RefCell::new(0)),
+            websocket: None,
         }
     }
     
-    pub async fn initialize_ws(&mut self) {  
-        self.start_websocket();
+    pub async fn initialize_ws(&mut self, symbol: &str) {
+        self.start_websocket(symbol).await;
     }
-    pub fn resize(&mut self, new_widths: &[f64], new_heights: &[f64]) {
-        self.canvas_main.resize(new_widths[0], new_heights[0]);
-        self.canvas_orderbook.resize(new_widths[1], new_heights[1]);
-        self.canvas_indicator_volume.resize(new_widths[2], new_heights[2]);
-        self.canvas_bubble.borrow_mut().resize(new_widths[3], new_heights[3]);
-        self.canvas_indi_cvd.resize(new_widths[4], new_heights[4]);
-    }
-   
-    pub fn start_websocket(&mut self) {
-        let ws = WebSocket::new("wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/btcusdt@depth@100ms/btcusdt@kline_1m").unwrap();
-
+    
+    pub async fn start_websocket(&mut self, symbol: &str) {
+        if let Some(ws) = &self.websocket {
+            log("Closing existing websocket");
+            ws.close().unwrap();
+            self.clear_datasets();
+        }
+        
         let mut current_kline_open: u64 = 0;
         let mut trades_buffer: Vec<Trade> = Vec::new();
         let bucket_size = Arc::clone(&self.bucket_size); 
@@ -110,6 +109,10 @@ impl CanvasManager {
         let last_depth_update = Rc::clone(&self.last_depth_update);
 
         let canvas_bubble = Rc::clone(&self.canvas_bubble);
+
+        log(format!("Starting websocket for {}", symbol).as_str());
+
+        let ws = WebSocket::new(&format!("wss://fstream.binance.com/stream?streams={}@aggTrade/{}@depth@100ms/{}@kline_1m", symbol, symbol, symbol)).unwrap();
 
         let onmessage_callback = Closure::wrap(Box::new(move |event: MessageEvent| {
             if let Ok(data) = event.data().dyn_into::<js_sys::JsString>() {
@@ -287,6 +290,8 @@ impl CanvasManager {
 
         ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
         onmessage_callback.forget();
+
+        self.websocket = Some(ws);
     }   
 
     pub fn render(&mut self) {
@@ -389,6 +394,14 @@ impl CanvasManager {
         self.canvas_indi_cvd.x_zoom = self.x_zoom;
         self.canvas_indicator_volume.x_zoom = self.x_zoom;
     }    
+
+    pub fn resize(&mut self, new_widths: &[f64], new_heights: &[f64]) {
+        self.canvas_main.resize(new_widths[0], new_heights[0]);
+        self.canvas_orderbook.resize(new_widths[1], new_heights[1]);
+        self.canvas_indicator_volume.resize(new_widths[2], new_heights[2]);
+        self.canvas_bubble.borrow_mut().resize(new_widths[3], new_heights[3]);
+        self.canvas_indi_cvd.resize(new_widths[4], new_heights[4]);
+    }
 
     pub fn fetch_depth(&mut self, depth: JsValue) {
         self.orderbook_manager.fetch_depth(depth);
@@ -524,6 +537,13 @@ impl CanvasManager {
                 }
             }
         }
+    }
+
+    pub fn clear_datasets(&mut self) {
+        self.klines_ohlcv.write().unwrap().clear();
+        self.klines_trades.write().unwrap().clear();
+        self.oi_datapoints.write().unwrap().clear();
+        self.canvas_bubble.borrow_mut().reset();
     }
 }
 pub struct CanvasOrderbook {
@@ -921,6 +941,11 @@ impl CanvasBubbleTrades {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+    }
+    pub fn reset(&mut self) {
+        self.trades.clear();
+        self.sell_trade_counts.clear();
+        self.buy_trade_counts.clear();
     }
 
     pub fn render(&mut self, trades_buffer: &Vec<Trade>, last_update: u64) {
