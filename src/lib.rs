@@ -86,6 +86,13 @@ impl CanvasManager {
     pub async fn initialize_ws(&mut self) {  
         self.start_websocket();
     }
+    pub fn resize(&mut self, new_widths: &[f64], new_heights: &[f64]) {
+        self.canvas_main.resize(new_widths[0], new_heights[0]);
+        self.canvas_orderbook.resize(new_widths[1], new_heights[1]);
+        self.canvas_indicator_volume.resize(new_widths[2], new_heights[2]);
+        self.canvas_bubble.borrow_mut().resize(new_widths[3], new_heights[3]);
+        self.canvas_indi_cvd.resize(new_widths[4], new_heights[4]);
+    }
    
     pub fn start_websocket(&mut self) {
         let ws = WebSocket::new("wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/btcusdt@depth@100ms/btcusdt@kline_1m").unwrap();
@@ -542,6 +549,10 @@ impl CanvasOrderbook {
             Err(error) => Err(error),
         }
     }
+    pub fn resize(&mut self, new_width: f64, new_height: f64) {
+        self.width = new_width;
+        self.height = new_height;
+    }
 
     pub fn render(&mut self, y_min: f64, y_max: f64, bids: &Vec<Order>, asks: &Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>) {
         let context = &self.ctx;
@@ -647,6 +658,11 @@ impl CanvasMain {
             Err(error) => Err(error),
         }
     }
+    pub fn resize(&mut self, new_width: f64, new_height: f64) {
+        self.width = new_width;
+        self.height = new_height;
+    }
+
     pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: &Vec<(&u64, &TradeGroups)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
@@ -739,6 +755,11 @@ impl CanvasIndicatorVolume {
             Err(error) => Err(error),
         }
     }
+    pub fn resize(&mut self, new_width: f64, new_height: f64) {
+        self.width = new_width;
+        self.height = new_height;
+    }
+
     pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
@@ -797,6 +818,11 @@ impl CanvasIndiCVD {
             Err(error) => Err(error),
         }
     }
+    pub fn resize(&mut self, new_width: f64, new_height: f64) {
+        self.width = new_width;
+        self.height = new_height;
+    }
+
     pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>, oi_obj: &Vec<&(u64, f64)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
@@ -892,6 +918,11 @@ impl CanvasBubbleTrades {
             Err(error) => Err(error),
         }
     }
+    pub fn resize(&mut self, new_width: f64, new_height: f64) {
+        self.width = new_width;
+        self.height = new_height;
+    }
+
     pub fn render(&mut self, trades_buffer: &Vec<Trade>, last_update: u64) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
