@@ -63,6 +63,7 @@ pub struct CanvasManager {
     bucket_size: Arc<RwLock<f64>>,
     last_depth_update: Rc<RefCell<u64>>,
     websocket: Option<WebSocket>,
+    tick_size: Rc<RefCell<f64>>
 }
 #[wasm_bindgen]
 impl CanvasManager {
@@ -82,6 +83,7 @@ impl CanvasManager {
             bucket_size: Arc::new(RwLock::new(1.0)),
             last_depth_update: Rc::new(RefCell::new(0)),
             websocket: None,
+            tick_size: Rc::new(RefCell::new(0.0)),
         }
     }
     
@@ -536,6 +538,18 @@ impl CanvasManager {
                     log(&format!("Failed to parse hist_trades: {}", e));
                 }
             }
+        }
+    }
+
+    pub fn set_symbol_info(&mut self, default_tick_size: f64, _min_trade_size: f64, user_tick_setting: f64) {
+        if let Ok(mut bucket_size) = self.bucket_size.try_write() {
+            *bucket_size = default_tick_size * user_tick_setting;
+            *self.tick_size.borrow_mut() = default_tick_size;
+        }
+    }
+    pub fn set_tick_size(&mut self, user_tick_setting: f64) {
+        if let Ok(mut bucket_size) = self.bucket_size.try_write() {
+            *bucket_size = user_tick_setting * *self.tick_size.borrow();
         }
     }
 
