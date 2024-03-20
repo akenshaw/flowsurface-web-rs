@@ -405,10 +405,10 @@ impl CanvasManager {
         self.canvas_indi_cvd.resize(new_widths[4], new_heights[4]);
     }
 
-    pub fn fetch_depth(&mut self, depth: JsValue) {
+    pub fn gather_depth(&mut self, depth: JsValue) {
         self.orderbook_manager.fetch_depth(depth);
     }
-    pub fn fetch_oi(&mut self, oi: JsValue) {
+    pub fn gather_oi(&mut self, oi: JsValue) {
         if let Some(oi_str) = oi.as_string() {
             match serde_json::from_str::<serde_json::Value>(&oi_str) {
                 Ok(oi_obj) => {
@@ -448,7 +448,7 @@ impl CanvasManager {
             }
         }
     }       
-    pub fn fetch_klines(&mut self, klines: JsValue) {
+    pub fn gather_klines(&mut self, klines: JsValue) {
         if let Some(klines_str) = klines.as_string() {
             match serde_json::from_str::<Vec<Vec<serde_json::Value>>>(&klines_str) {
                 Ok(klines) => {
@@ -490,16 +490,7 @@ impl CanvasManager {
             }
         }
     }    
-    pub fn get_kline_ohlcv_keys(&self) -> Vec<u64> {
-        match self.klines_ohlcv.try_read() {
-            Ok(klines_borrowed) => klines_borrowed.keys().cloned().collect(),
-            Err(e) => {
-                log(&format!("Failed to acquire lock on klines_ohlcv during get_kline_ohlcv_keys: {}", e));
-                Vec::new()
-            }
-        }
-    }
-    pub fn concat_hist_trades(&mut self, hist_trades: JsValue, i: String) {
+    pub fn gather_hist_trades(&mut self, hist_trades: JsValue, i: String) {
         let i = match i.parse::<u64>() {
             Ok(val) => val,
             Err(_) => {
@@ -550,6 +541,15 @@ impl CanvasManager {
     pub fn set_tick_size(&mut self, user_tick_setting: f64) {
         if let Ok(mut bucket_size) = self.bucket_size.try_write() {
             *bucket_size = user_tick_setting * *self.tick_size.borrow();
+        }
+    }
+    pub fn get_kline_ohlcv_keys(&self) -> Vec<u64> {
+        match self.klines_ohlcv.try_read() {
+            Ok(klines_borrowed) => klines_borrowed.keys().cloned().collect(),
+            Err(e) => {
+                log(&format!("Failed to acquire lock on klines_ohlcv during get_kline_ohlcv_keys: {}", e));
+                Vec::new()
+            }
         }
     }
 
