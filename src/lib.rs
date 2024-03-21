@@ -101,6 +101,7 @@ impl CanvasManager {
             log("Closing existing websocket");
             ws.close().unwrap();
             self.clear_datasets();
+            *self.tick_size.borrow_mut() = 0.1;
         }
         
         let mut current_kline_open: u64 = 0;
