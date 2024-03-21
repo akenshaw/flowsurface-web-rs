@@ -1,4 +1,5 @@
 import * as wasm_module from "rsdepth";
+import "./style.css";
 import {
   combineDicts,
   fetchDepthAsync,
