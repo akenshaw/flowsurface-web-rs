@@ -88,7 +88,7 @@ impl CanvasManager {
             bucket_size: Arc::new(RwLock::new(5.0)),
             last_depth_update: Rc::new(RefCell::new(0)),
             websocket: None,
-            tick_size: Rc::new(RefCell::new(0.0)),
+            tick_size: Rc::new(RefCell::new(0.1)),
         }
     }
     
@@ -339,11 +339,13 @@ impl CanvasManager {
                 match (self.orderbook_manager.bids.try_read(), self.orderbook_manager.asks.try_read()) {
                     (Ok(bids_borrowed), Ok(asks_borrowed)) => {
                         let bucket_size = self.bucket_size.read().unwrap();
+                        let decimals = self.tick_size.borrow().log10().abs() as i32;
+                        let multiplier = 10f64.powi(decimals);
 
-                        let grouped_bids = group_orders(*bucket_size, &bids_borrowed);
-                        let grouped_asks = group_orders(*bucket_size, &asks_borrowed);
+                        let grouped_bids = group_orders(*bucket_size, &bids_borrowed, multiplier);
+                        let grouped_asks = group_orders(*bucket_size, &asks_borrowed, multiplier);
 
-                        self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update);
+                        self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update, decimals);
 
                         match self.klines_trades.try_read() {
                             Ok(klines_trades_borrowed) => {    
@@ -356,12 +358,12 @@ impl CanvasManager {
                                         let mut sells: HashMap<i64, f64> = HashMap::new();
                         
                                         for (price, quantity) in &trade_groups.buy_trades {
-                                            let bucket = ((price / *bucket_size).round() * *bucket_size * 100.0) as i64;
+                                            let bucket = ((price / *bucket_size).round() * *bucket_size * multiplier) as i64;
                                             let entry = buys.entry(bucket).or_insert(0.0);
                                             *entry += quantity;
                                         }
                                         for (price, quantity) in &trade_groups.sell_trades {
-                                            let bucket = ((price / *bucket_size).round() * *bucket_size * 100.0) as i64;
+                                            let bucket = ((price / *bucket_size).round() * *bucket_size * multiplier) as i64;
                                             let entry = sells.entry(bucket).or_insert(0.0);
                                             *entry += quantity;
                                         }
@@ -369,7 +371,7 @@ impl CanvasManager {
                                         grouped_trades.push((*open_time, GroupedTrades { buys, sells }));
                                     }
                                 }
-                                self.canvas_main.render(y_min, y_max, &visible_klines, grouped_trades);
+                                self.canvas_main.render(y_min, y_max, &visible_klines, grouped_trades, multiplier);
                             },
                             Err(e) => {
                                 log(&format!("Failed to acquire lock on klines_trades during render: {}", e));
@@ -546,6 +548,7 @@ impl CanvasManager {
         if let Ok(mut bucket_size) = self.bucket_size.try_write() {
             *bucket_size = default_tick_size * user_tick_setting;
             *self.tick_size.borrow_mut() = default_tick_size;
+            log(&format!("Default bucket size: {}", *bucket_size));
         }
     }
     pub fn set_tick_size(&mut self, user_tick_setting: f64) {
@@ -599,7 +602,7 @@ impl CanvasOrderbook {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>, decimals: i32) {
         let context = &self.ctx;
         self.ctx.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -613,12 +616,12 @@ impl CanvasOrderbook {
         let step = (y_max - y_min) / num_labels as f64;
         context.set_font("20px monospace");
         context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
-
+        
         for i in 0..=num_labels {
             let y_value = y_min + step * i as f64;
             let y = self.height - ((y_value - y_min) / (y_max - y_min)) * self.height as f64;
 
-            let y_value_str = format!("{:.1}", y_value);
+            let y_value_str = format!("{:.*}", decimals as usize, y_value);
 
             context.fill_text(&y_value_str, 6.0, y).unwrap();
         }
@@ -648,7 +651,7 @@ impl CanvasOrderbook {
         }
         klines.last().map(|(_last_time, kline)| {
             let y = ((kline.close - y_min) / (y_max - y_min)) * self.height as f64;
-            let y_value_str = format!("{:.1}", kline.close);
+            let y_value_str = format!("{:.*}", decimals as usize, kline.close);
 
             if kline.open < kline.close {
                 context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
@@ -708,10 +711,10 @@ impl CanvasMain {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>, multiplier: f64) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
-
+        
         if let Some((last_kline_open, _)) = klines.iter().last() {
             let zoom_scale = self.x_zoom * 60.0 * 1000.0;
             let time_difference: f64 = **last_kline_open as f64 + 60000.0 - zoom_scale;
@@ -748,7 +751,7 @@ impl CanvasMain {
                 if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| time == kline.open_time) {
                     context.set_stroke_style(&"rgba(81, 205, 160, 1)".into());
                     for (price_as_int, quantity) in &trade_groups.buys { 
-                        let price = *price_as_int as f64 / 100.0;
+                        let price = *price_as_int as f64 / multiplier;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
 
@@ -759,7 +762,7 @@ impl CanvasMain {
                     }
                     context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
                     for (price_as_int, quantity) in &trade_groups.sells {
-                        let price = *price_as_int as f64 / 100.0;
+                        let price = *price_as_int as f64 / multiplier;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
 
@@ -1074,16 +1077,16 @@ impl CanvasBubbleTrades {
     }
 }
 
-pub fn group_orders(bucket_size: f64, orders: &Vec<Order>) -> Vec<Order> {
+pub fn group_orders(bucket_size: f64, orders: &Vec<Order>, multiplier: f64) -> Vec<Order> {
     let mut grouped_orders = HashMap::new();
     for order in orders {
-        let price = ((order.price / bucket_size).round() * bucket_size * 100.0) as i64;
+        let price = ((order.price / bucket_size).round() * bucket_size * multiplier) as i64;
         let quantity = grouped_orders.entry(price).or_insert(0.0);
         *quantity += order.quantity;
     }
     let mut orders = Vec::new();
     for (price, quantity) in grouped_orders {
-        let price = price as f64 / 100.0; 
+        let price = price as f64 / multiplier; 
         orders.push(Order { price, quantity });
     }
     orders
