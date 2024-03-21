@@ -12,6 +12,8 @@ use serde_json::Value;
 
 extern crate js_sys;
 
+extern crate console_error_panic_hook;
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -73,6 +75,7 @@ pub struct CanvasManager {
 #[wasm_bindgen]
 impl CanvasManager {
     pub fn new(canvas1: HtmlCanvasElement, canvas2: HtmlCanvasElement, canvas3: HtmlCanvasElement, canvas4: HtmlCanvasElement, canvas5: HtmlCanvasElement) -> Self {
+        utils::set_panic_hook();
         Self {
             klines_ohlcv: Arc::new(RwLock::new(BTreeMap::new())),
             klines_trades: Arc::new(RwLock::new(BTreeMap::new())),
