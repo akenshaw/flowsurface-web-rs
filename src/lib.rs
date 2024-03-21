@@ -43,8 +43,13 @@ pub struct Kline {
 }
 #[derive(Debug)]
 pub struct TradeGroups {
-    buy: HashMap<i64, f64>,
-    sell: HashMap<i64, f64>,
+    buy_trades: Vec<(f64, f64)>,
+    sell_trades: Vec<(f64, f64)>,
+}
+#[derive(Debug)]
+pub struct GroupedTrades {
+    buys: HashMap<i64, f64>,
+    sells: HashMap<i64, f64>,
 }
 
 #[wasm_bindgen]
@@ -80,7 +85,7 @@ impl CanvasManager {
             canvas_indi_cvd: CanvasIndiCVD::new(canvas5).expect("Failed to create CanvasIndiCVD"),
             pan_x_offset: 0.0,
             x_zoom: 30.0,
-            bucket_size: Arc::new(RwLock::new(1.0)),
+            bucket_size: Arc::new(RwLock::new(5.0)),
             last_depth_update: Rc::new(RefCell::new(0)),
             websocket: None,
             tick_size: Rc::new(RefCell::new(0.0)),
@@ -100,7 +105,6 @@ impl CanvasManager {
         
         let mut current_kline_open: u64 = 0;
         let mut trades_buffer: Vec<Trade> = Vec::new();
-        let bucket_size = Arc::clone(&self.bucket_size); 
 
         let klines_trades = Arc::clone(&self.klines_trades);
         let klines_ohlcv = Arc::clone(&self.klines_ohlcv);
@@ -201,23 +205,19 @@ impl CanvasManager {
                         if current_kline_open != 0 {
                             match klines_trades.try_write() {
                                 Ok(mut klines_trades) => {
-                                    let bucket_size_lock = bucket_size.read().unwrap();
-                                    let trade_groups = klines_trades.entry(current_kline_open).or_insert(TradeGroups { buy: HashMap::new(), sell: HashMap::new() });
-                                    for trade in &trades_buffer {
-                                        let price_as_int = ((trade.price / *bucket_size_lock).round() * *bucket_size_lock * 100.0) as i64;
-                                        let quantity_sum = if trade.is_buyer_maker {
-                                            trade_groups.sell.entry(price_as_int).or_insert(0.0)
-                                        } else {
-                                            trade_groups.buy.entry(price_as_int).or_insert(0.0)
-                                        };
-                                        *quantity_sum += trade.quantity;
-                                    }
-
                                     if let Some(update_time) = v["data"]["T"].as_u64() {
                                         let mut canvas_bubble = canvas_bubble.borrow_mut();
                                         canvas_bubble.render(&trades_buffer, update_time);
                                     }
-                                    trades_buffer.clear();
+
+                                    let trade_groups = klines_trades.entry(current_kline_open).or_insert(TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() });
+                                    for trade in trades_buffer.drain(..) {
+                                        if trade.is_buyer_maker {
+                                            trade_groups.sell_trades.push((trade.price, trade.quantity));
+                                        } else {
+                                            trade_groups.buy_trades.push((trade.price, trade.quantity));
+                                        }
+                                    }
                                 },
                                 Err(poisoned) => {
                                     log(&format!("klines_trades locked on render: {:?}", poisoned));
@@ -343,16 +343,33 @@ impl CanvasManager {
                         let grouped_bids = group_orders(*bucket_size, &bids_borrowed);
                         let grouped_asks = group_orders(*bucket_size, &asks_borrowed);
 
-                        self.canvas_orderbook.render(y_min, y_max, &grouped_bids, &grouped_asks, &visible_klines, &self.last_depth_update);
+                        self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update);
 
                         match self.klines_trades.try_read() {
                             Ok(klines_trades_borrowed) => {    
-                                let visible_trades: Vec<_> = klines_trades_borrowed.iter().filter(|&(open_time, _)| {
+                                let mut grouped_trades: Vec<(u64, GroupedTrades)> = Vec::new();
+                        
+                                for (open_time, trade_groups) in klines_trades_borrowed.iter() {
                                     let x: f64 = ((*open_time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
-                                    x >= left_x as f64 && x <= right_x as f64
-                                }).collect();  
-                                    
-                                self.canvas_main.render(y_min, y_max, &visible_klines, &visible_trades);
+                                    if x >= left_x as f64 && x <= right_x as f64 {
+                                        let mut buys: HashMap<i64, f64> = HashMap::new();
+                                        let mut sells: HashMap<i64, f64> = HashMap::new();
+                        
+                                        for (price, quantity) in &trade_groups.buy_trades {
+                                            let bucket = ((price / *bucket_size).round() * *bucket_size * 100.0) as i64;
+                                            let entry = buys.entry(bucket).or_insert(0.0);
+                                            *entry += quantity;
+                                        }
+                                        for (price, quantity) in &trade_groups.sell_trades {
+                                            let bucket = ((price / *bucket_size).round() * *bucket_size * 100.0) as i64;
+                                            let entry = sells.entry(bucket).or_insert(0.0);
+                                            *entry += quantity;
+                                        }
+                        
+                                        grouped_trades.push((*open_time, GroupedTrades { buys, sells }));
+                                    }
+                                }
+                                self.canvas_main.render(y_min, y_max, &visible_klines, grouped_trades);
                             },
                             Err(e) => {
                                 log(&format!("Failed to acquire lock on klines_trades during render: {}", e));
@@ -501,24 +518,17 @@ impl CanvasManager {
         if let Some(hist_trades_str) = hist_trades.as_string() {
             match serde_json::from_str::<Vec<Trade>>(&hist_trades_str) {
                 Ok(hist_trades) => {
-                    log(&format!("{}", i));
                     match self.klines_trades.try_write() {
                         Ok(mut klines_trades) => {
-                            let bucket_size_lock = self.bucket_size.read().unwrap();
-                            let trade_groups = klines_trades.entry(i as u64).or_insert(TradeGroups { buy: HashMap::new(), sell: HashMap::new() });
-                            for trade in &hist_trades {
-                                let price_as_int = ((trade.price / *bucket_size_lock).round() * *bucket_size_lock * 100.0) as i64;
-                                let quantity_sum = if trade.is_buyer_maker {
-                                    trade_groups.sell.entry(price_as_int).or_insert(0.0)
+                            let mut trade_groups = TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() };
+                            for trade in hist_trades {
+                                if trade.is_buyer_maker {
+                                    trade_groups.sell_trades.push((trade.price, trade.quantity));
                                 } else {
-                                    trade_groups.buy.entry(price_as_int).or_insert(0.0)
-                                };
-                                *quantity_sum += trade.quantity;
+                                    trade_groups.buy_trades.push((trade.price, trade.quantity));
+                                }
                             }
-                            // log keys in klines_trades and how many entries are in each
-                            //for (k, v) in klines_trades.iter() {
-                            //    log(&format!("{}: {}", k, v.buy.len() + v.sell.len()));
-                            //}
+                            klines_trades.insert(i, trade_groups);
                         },
                         Err(poisoned) => {
                             log(&format!("klines_trades locked on render: {:?}", poisoned));
@@ -541,6 +551,7 @@ impl CanvasManager {
     pub fn set_tick_size(&mut self, user_tick_setting: f64) {
         if let Ok(mut bucket_size) = self.bucket_size.try_write() {
             *bucket_size = user_tick_setting * *self.tick_size.borrow();
+            log(&format!("Setting bucket size to: {}", *bucket_size));
         }
     }
     pub fn get_kline_ohlcv_keys(&self) -> Vec<u64> {
@@ -588,7 +599,7 @@ impl CanvasOrderbook {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, bids: &Vec<Order>, asks: &Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>) {
         let context = &self.ctx;
         self.ctx.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -697,7 +708,7 @@ impl CanvasMain {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: &Vec<(&u64, &TradeGroups)>) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -707,7 +718,7 @@ impl CanvasMain {
             let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
             
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
-                trade_groups.buy.iter().chain(trade_groups.sell.iter()).map(|(_, quantity)| *quantity)
+                trade_groups.buys.iter().chain(trade_groups.sells.iter()).map(|(_, quantity)| *quantity)
             }).fold(0.0, f64::max);
     
             context.set_line_width(1.0);
@@ -734,9 +745,9 @@ impl CanvasMain {
                 context.line_to(x + (rect_width*2.0), self.height - y_low);
                 context.stroke();
 
-                if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| *time == kline.open_time) {
+                if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| time == kline.open_time) {
                     context.set_stroke_style(&"rgba(81, 205, 160, 1)".into());
-                    for (price_as_int, quantity) in &trade_groups.buy { 
+                    for (price_as_int, quantity) in &trade_groups.buys { 
                         let price = *price_as_int as f64 / 100.0;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
@@ -747,7 +758,7 @@ impl CanvasMain {
                         context.stroke();
                     }
                     context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
-                    for (price_as_int, quantity) in &trade_groups.sell {
+                    for (price_as_int, quantity) in &trade_groups.sells {
                         let price = *price_as_int as f64 / 100.0;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
