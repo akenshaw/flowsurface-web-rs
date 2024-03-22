@@ -106,8 +106,6 @@ impl CanvasManager {
             self.clear_datasets();
             *self.tick_size.borrow_mut() = 0.1;
         }
-        
-        let mut current_kline_open: u64 = 0;
         let mut trades_buffer: Vec<Trade> = Vec::new();
 
         let klines_trades = Arc::clone(&self.klines_trades);
@@ -118,9 +116,12 @@ impl CanvasManager {
         //let last_update_id = Arc::clone(&self.orderbook_manager.last_update_id);
         let last_depth_update = Rc::clone(&self.last_depth_update);
 
-        let canvas_bubble = Rc::clone(&self.canvas_bubble);
+        let mut next_kline_trades = Vec::new();
+        let mut current_kline_open: u64 = 0;
+        let mut current_kline_close: u64 = 0;
 
         log(format!("Starting websocket for {}", symbol).as_str());
+        let canvas_bubble = Rc::clone(&self.canvas_bubble);
 
         let ws = WebSocket::new(&format!("wss://fstream.binance.com/stream?streams={}@aggTrade/{}@depth@100ms/{}@kline_1m", symbol, symbol, symbol)).unwrap();
 
@@ -202,32 +203,49 @@ impl CanvasManager {
                                 log(&format!("asks locked on render"));
                             }
                         }
-                        if let Some(update_id) = v["data"]["T"].as_u64() {
-                            *last_depth_update.borrow_mut() = update_id;
-                        }
-    
-                        if current_kline_open != 0 {
-                            match klines_trades.try_write() {
-                                Ok(mut klines_trades) => {
-                                    if let Some(update_time) = v["data"]["T"].as_u64() {
+                        if let Some(update_time) = v["data"]["T"].as_u64() {
+                            if current_kline_open != 0 {
+                                match klines_trades.try_write() {
+                                    Ok(mut klines_trades) => {
                                         let mut canvas_bubble = canvas_bubble.borrow_mut();
                                         canvas_bubble.render(&trades_buffer, update_time);
-                                    }
 
-                                    let trade_groups = klines_trades.entry(current_kline_open).or_insert(TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() });
-                                    for trade in trades_buffer.drain(..) {
-                                        if trade.is_buyer_maker {
-                                            trade_groups.sell_trades.push((trade.price, trade.quantity));
-                                        } else {
-                                            trade_groups.buy_trades.push((trade.price, trade.quantity));
+                                        let trade_groups = klines_trades.entry(current_kline_open).or_insert(TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() });
+                                        for trade in trades_buffer.drain(..) {
+                                            if trade.time >= current_kline_open && trade.time < current_kline_close {
+                                                if trade.is_buyer_maker {
+                                                    trade_groups.sell_trades.push((trade.price, trade.quantity));
+                                                } else {
+                                                    trade_groups.buy_trades.push((trade.price, trade.quantity));
+                                                }
+                                            } else if trade.time >= current_kline_close {
+                                                next_kline_trades.push(trade);
+                                            }
                                         }
+                                        if !next_kline_trades.is_empty() {
+                                            log(&format!("next_kline_trades length: {:?}", next_kline_trades.len()));
+                                            next_kline_trades.retain(|trade| {
+                                                if trade.time >= current_kline_close {
+                                                    let trade_groups = klines_trades.entry(current_kline_close + 1).or_insert(TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() });
+                                                    if trade.is_buyer_maker {
+                                                        trade_groups.sell_trades.push((trade.price, trade.quantity));
+                                                    } else {
+                                                        trade_groups.buy_trades.push((trade.price, trade.quantity));
+                                                    }
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            });
+                                        }
+                                    },
+                                    Err(poisoned) => {
+                                        log(&format!("klines_trades locked on render: {:?}", poisoned));
                                     }
-                                },
-                                Err(poisoned) => {
-                                    log(&format!("klines_trades locked on render: {:?}", poisoned));
                                 }
+                                *last_depth_update.borrow_mut() = update_time;
                             }
-                        }
+                        }                    
                     },
                     Some(stream) if stream.contains("kline") => {
                         if let Some(kline_data) = v["data"]["k"].as_object() {
@@ -284,6 +302,7 @@ impl CanvasManager {
                                     klines_ohlcv.insert(open_time, kline);  
                                 }
                                 current_kline_open = open_time;
+                                current_kline_close = close_time;
                             }
                         }
                     },
