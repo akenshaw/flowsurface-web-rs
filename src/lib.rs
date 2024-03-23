@@ -223,7 +223,6 @@ impl CanvasManager {
                                             }
                                         }
                                         if !next_kline_trades.is_empty() {
-                                            log(&format!("next_kline_trades length: {:?}", next_kline_trades.len()));
                                             next_kline_trades.retain(|trade| {
                                                 if trade.time >= current_kline_close {
                                                     let trade_groups = klines_trades.entry(current_kline_close + 1).or_insert(TradeGroups { buy_trades: Vec::new(), sell_trades: Vec::new() });
@@ -332,11 +331,13 @@ impl CanvasManager {
                 let left_x: f64 = 0.0 - self.pan_x_offset;
                 let right_x: f64 = self.canvas_main.width - self.pan_x_offset;
 
+                let bucket_size = self.bucket_size.read().unwrap();
+
                 let visible_klines: Vec<_> = klines_borrowed.iter().filter(|&(open_time, _)| {
                     let x: f64 = ((*open_time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
                     x >= left_x as f64 && x <= right_x as f64
                 }).collect();
-
+                                                
                 let avg_body_length: f64 = visible_klines.iter()
                     .map(|(_, kline)| (kline.close - kline.open).abs())
                     .sum::<f64>() / visible_klines.len() as f64;
@@ -361,7 +362,7 @@ impl CanvasManager {
 
                 match (self.orderbook_manager.bids.try_read(), self.orderbook_manager.asks.try_read()) {
                     (Ok(bids_borrowed), Ok(asks_borrowed)) => {
-                        let bucket_size = self.bucket_size.read().unwrap();
+                        let num_possible_lines = (y_max - y_min) / *bucket_size;
                         let decimals = self.tick_size.borrow().log10().abs() as i32;
                         let multiplier = 10f64.powi(decimals);
 
@@ -371,7 +372,7 @@ impl CanvasManager {
                         let grouped_bids = group_orders(*bucket_size, filtered_bids, multiplier);
                         let grouped_asks = group_orders(*bucket_size, filtered_asks, multiplier);
 
-                        self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update, decimals);
+                        self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update, decimals, num_possible_lines);
 
                         match self.klines_trades.try_read() {
                             Ok(klines_trades_borrowed) => {    
@@ -397,7 +398,7 @@ impl CanvasManager {
                                         grouped_trades.push((*open_time, GroupedTrades { buys, sells }));
                                     }
                                 }
-                                self.canvas_main.render(y_min, y_max, &visible_klines, grouped_trades, multiplier);
+                                self.canvas_main.render(y_min, y_max, &visible_klines, grouped_trades, multiplier, num_possible_lines);
                             },
                             Err(e) => {
                                 log(&format!("Failed to acquire lock on klines_trades during render: {}", e));
@@ -628,7 +629,7 @@ impl CanvasOrderbook {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>, decimals: i32) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>, decimals: i32, num_possible_lines: f64) {
         let context = &self.ctx;
         self.ctx.clear_rect(0.0, 0.0, self.width, self.height);
 
@@ -652,30 +653,29 @@ impl CanvasOrderbook {
             context.fill_text(&y_value_str, 6.0, y).unwrap();
         }
 
+        let height_per_line = (self.height / num_possible_lines).round();
+
         if let Some(_best_bid) = bids.first() {     
-            context.set_stroke_style(&"rgba(81, 205, 160, 1)".into());
+            context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
             for (_i, bid) in bids.iter().enumerate() {
                 let x = (bid.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 120.0) as f64;
                 let y = ((bid.price - y_min) / (y_max - y_min)) * self.height as f64;
-                context.begin_path();
-                context.move_to(108.0, self.height - y);
-                context.line_to(108.0 + x, self.height - y);
-                context.stroke();
+                let y_top = self.height - y - height_per_line / 2.0;
+                context.fill_rect(108.0, y_top, x, height_per_line);
             }
         }
         if let Some(_best_ask) = asks.first() {
-            context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
+            context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             for (_i, ask) in asks.iter().enumerate() {
                 let x = (ask.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 120.0) as f64;
                 let y = ((ask.price - y_min) / (y_max - y_min)) * self.height as f64;
-                context.begin_path();
-                context.move_to(108.0, self.height - y);
-                context.line_to(108.0 + x, self.height - y);
-                context.stroke();
+                let y_top = self.height - y - height_per_line / 2.0;
+                context.fill_rect(108.0, y_top, x, height_per_line);
             }
 
         }
         klines.last().map(|(_last_time, kline)| {
+            context.set_font("20px monospace");
             let y = ((kline.close - y_min) / (y_max - y_min)) * self.height as f64;
             let y_value_str = format!("{:.*}", decimals as usize, kline.close);
 
@@ -737,7 +737,7 @@ impl CanvasMain {
         self.height = new_height;
     }
 
-    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>, multiplier: f64) {
+    pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>, multiplier: f64, num_possible_lines: f64) {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
         
@@ -749,8 +749,12 @@ impl CanvasMain {
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
                 trade_groups.buys.iter().chain(trade_groups.sells.iter()).map(|(_, quantity)| *quantity)
             }).fold(0.0, f64::max);
+
+            let height_per_line = (self.height / num_possible_lines).round();
+            let font_size = (height_per_line / 2.0).round();
     
             context.set_line_width(1.0);
+            context.set_font(&format!("{}px monospace", font_size));
             for (_i, (_, kline)) in klines.iter().enumerate() {
                 let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
 
@@ -759,45 +763,64 @@ impl CanvasMain {
                 let y_high = self.height as f64 * (kline.high - y_min) / (y_max - y_min);
                 let y_low = self.height as f64 * (kline.low - y_min) / (y_max - y_min);
 
-                context.set_stroke_style(&(if kline.open < kline.close { "rgba(50, 200, 50, 1)" } else { "rgba(200, 50, 50, 1)" }).into());
-                context.begin_path();
-                context.move_to(x + rect_width, self.height - y_open);
-                context.line_to(x + rect_width, self.height - y_close);
-                context.stroke();
-
-                context.set_stroke_style(&"rgba(200, 200, 200, 0.5)".into());
-                context.begin_path();
-                context.move_to(x, self.height - y_high);
-                context.line_to(x + (rect_width*2.0), self.height - y_high);
-
-                context.move_to(x, self.height - y_low);
-                context.line_to(x + (rect_width*2.0), self.height - y_low);
-                context.stroke();
-
                 if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| time == kline.open_time) {
-                    context.set_stroke_style(&"rgba(81, 205, 160, 1)".into());
+                    context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
+                    let mut texts = Vec::new(); 
+
                     for (price_as_int, quantity) in &trade_groups.buys { 
                         let price = *price_as_int as f64 / multiplier;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
 
-                        context.begin_path();
-                        context.move_to(x + rect_width + 4.0, self.height - y_trade);
-                        context.line_to(x + rect_width + 4.0 + scaled_quantity, self.height - y_trade);
-                        context.stroke();
+                        let y_top = self.height - y_trade - height_per_line / 2.0;
+
+                        context.fill_rect(x + rect_width + 4.0, y_top, scaled_quantity, height_per_line);
+                        
+                        if height_per_line > 25.0 {
+                            let quantity_str = format!("{:.3}", quantity);
+                            texts.push((quantity_str, x + rect_width + 6.0, (y_top + height_per_line / 2.0 + font_size / 3.0))); 
+                        }
                     }
-                    context.set_stroke_style(&"rgba(192, 80, 77, 1)".into());
+                    context.set_fill_style(&"white".into());
+                    for (quantity_str, x, y) in texts.drain(..) {
+                        context.fill_text(&quantity_str, x, y).unwrap();
+                    }
+
+                    context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
                     for (price_as_int, quantity) in &trade_groups.sells {
                         let price = *price_as_int as f64 / multiplier;
                         let y_trade = self.height as f64 * (price - y_min) / (y_max - y_min);
                         let scaled_quantity = rect_width as f64 * quantity / max_quantity;
+                    
+                        let y_top = self.height - y_trade - height_per_line / 2.0;
 
-                        context.begin_path();
-                        context.move_to(x + rect_width - 4.0, self.height - y_trade);
-                        context.line_to(x + rect_width - 4.0 - scaled_quantity, self.height - y_trade);
-                        context.stroke();
+                        context.fill_rect(x + rect_width - 4.0, y_top, -scaled_quantity, height_per_line);
+                        
+                        if height_per_line > 25.0 {
+                            let quantity_str = format!("{:.3}", quantity);
+                            let text_metrics = context.measure_text(&quantity_str).unwrap();
+                            texts.push((quantity_str, x + rect_width - 6.0 - text_metrics.width(), (y_top + height_per_line / 2.0 + font_size / 3.0))); 
+                        }
                     }
+                    context.set_fill_style(&"white".into());
+                    for (quantity_str, x, y) in texts {
+                        context.fill_text(&quantity_str, x, y).unwrap();
+                    }
+                } else {
+                    context.set_stroke_style(&"rgba(200, 200, 200, 0.5)".into());
+                    context.begin_path();
+                    context.move_to(x, self.height - y_high);
+                    context.line_to(x + (rect_width*2.0), self.height - y_high);
+
+                    context.move_to(x, self.height - y_low);
+                    context.line_to(x + (rect_width*2.0), self.height - y_low);
+                    context.stroke();
                 }
+                context.set_stroke_style(&(if kline.open < kline.close { "rgba(50, 200, 50, 1)" } else { "rgba(200, 50, 50, 1)" }).into());
+                context.begin_path();
+                context.move_to(x + rect_width, self.height - y_open);
+                context.line_to(x + rect_width, self.height - y_close);
+                context.stroke();                
             }
         }
     }
