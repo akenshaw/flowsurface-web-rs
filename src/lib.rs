@@ -365,8 +365,11 @@ impl CanvasManager {
                         let decimals = self.tick_size.borrow().log10().abs() as i32;
                         let multiplier = 10f64.powi(decimals);
 
-                        let grouped_bids = group_orders(*bucket_size, &bids_borrowed, multiplier);
-                        let grouped_asks = group_orders(*bucket_size, &asks_borrowed, multiplier);
+                        let filtered_bids = bids_borrowed.iter().filter(|order| order.price >= y_min && order.price <= y_max).collect::<Vec<_>>();
+                        let filtered_asks = asks_borrowed.iter().filter(|order| order.price >= y_min && order.price <= y_max).collect::<Vec<_>>();
+
+                        let grouped_bids = group_orders(*bucket_size, filtered_bids, multiplier);
+                        let grouped_asks = group_orders(*bucket_size, filtered_asks, multiplier);
 
                         self.canvas_orderbook.render(y_min, y_max, grouped_bids, grouped_asks, &visible_klines, &self.last_depth_update, decimals);
 
@@ -1100,7 +1103,7 @@ impl CanvasBubbleTrades {
     }
 }
 
-pub fn group_orders(bucket_size: f64, orders: &Vec<Order>, multiplier: f64) -> Vec<Order> {
+pub fn group_orders(bucket_size: f64, orders: Vec<&Order>, multiplier: f64) -> Vec<Order> {
     let mut grouped_orders = HashMap::new();
     for order in orders {
         let price = ((order.price / bucket_size).round() * bucket_size * multiplier) as i64;
