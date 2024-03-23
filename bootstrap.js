@@ -196,11 +196,11 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper349": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper349"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper299": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper299"](p0i32,p1i32,p2i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper375": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper375"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper377": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper377"](p0i32,p1i32,p2i32);
 /******/ 					}
 /******/ 				}
 /******/ 			};
@@ -303,7 +303,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"09e8c3e77e25c5b5be0e"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"161238407d619bf3ae3e"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
