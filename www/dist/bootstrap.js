@@ -79,6 +79,12 @@
 /******/ 					"__wbg_queueMicrotask_481971b0d87f3dd4": function(p0i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_queueMicrotask_481971b0d87f3dd4"](p0i32);
 /******/ 					},
+/******/ 					"__wbindgen_object_clone_ref": function(p0i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_object_clone_ref"](p0i32);
+/******/ 					},
+/******/ 					"__wbg_width_e870de808b523851": function(p0i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_width_e870de808b523851"](p0i32);
+/******/ 					},
 /******/ 					"__wbg_setonmessage_2af154ce83a3dc94": function(p0i32,p1i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_setonmessage_2af154ce83a3dc94"](p0i32,p1i32);
 /******/ 					},
@@ -130,8 +136,8 @@
 /******/ 					"__wbg_fillText_6dfde0e3b04c85db": function(p0i32,p1i32,p2i32,p3f64,p4f64) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_fillText_6dfde0e3b04c85db"](p0i32,p1i32,p2i32,p3f64,p4f64);
 /******/ 					},
-/******/ 					"__wbindgen_object_clone_ref": function(p0i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_object_clone_ref"](p0i32);
+/******/ 					"__wbg_measureText_ea212ea07011bf71": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_measureText_ea212ea07011bf71"](p0i32,p1i32,p2i32);
 /******/ 					},
 /******/ 					"__wbg_width_aee8b8809b033b05": function(p0i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_width_aee8b8809b033b05"](p0i32);
@@ -196,11 +202,11 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper299": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper299"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper358": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper358"](p0i32,p1i32,p2i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper377": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper377"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper382": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper382"](p0i32,p1i32,p2i32);
 /******/ 					}
 /******/ 				}
 /******/ 			};
@@ -303,7 +309,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"161238407d619bf3ae3e"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"08f66ad25c510370b1e5"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
