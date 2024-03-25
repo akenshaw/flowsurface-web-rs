@@ -66,7 +66,9 @@ pub struct CanvasManager {
     canvas_bubble: Rc<RefCell<CanvasBubbleTrades>>,
     canvas_indi_cvd: CanvasIndiCVD,
     pan_x_offset: f64,
+    pan_y_offset: f64,
     x_zoom: f64,
+    y_zoom: f64,
     bucket_size: Arc<RwLock<f64>>,
     last_depth_update: Rc<RefCell<u64>>,
     websocket: Option<WebSocket>,
@@ -87,7 +89,9 @@ impl CanvasManager {
             canvas_bubble: Rc::new(RefCell::new(CanvasBubbleTrades::new(canvas4).expect("Failed to create CanvasBubbleTrades"))),
             canvas_indi_cvd: CanvasIndiCVD::new(canvas5).expect("Failed to create CanvasIndiCVD"),
             pan_x_offset: 0.0,
+            pan_y_offset: 0.0,
             x_zoom: 30.0,
+            y_zoom: 10.0,
             bucket_size: Arc::new(RwLock::new(5.0)),
             last_depth_update: Rc::new(RefCell::new(0)),
             websocket: None,
@@ -331,8 +335,6 @@ impl CanvasManager {
                 let left_x: f64 = 0.0 - self.pan_x_offset;
                 let right_x: f64 = self.canvas_main.width - self.pan_x_offset;
 
-                let bucket_size = self.bucket_size.read().unwrap();
-
                 let visible_klines: Vec<_> = klines_borrowed.iter().filter(|&(open_time, _)| {
                     let x: f64 = ((*open_time as f64) - time_difference) / zoom_scale * self.canvas_main.width;
                     x >= left_x as f64 && x <= right_x as f64
@@ -342,8 +344,10 @@ impl CanvasManager {
                     .map(|(_, kline)| (kline.close - kline.open).abs())
                     .sum::<f64>() / visible_klines.len() as f64;
 
-                let y_max: f64 = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
-                let y_min: f64 = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length;
+                let mut y_max: f64 = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
+                let mut y_min: f64 = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length; 
+                y_max += (y_max - y_min) * (self.pan_y_offset / self.canvas_main.height) + (y_max - y_min) * (self.y_zoom / 100.0);
+                y_min += (y_max - y_min) * (self.pan_y_offset / self.canvas_main.height) - (y_max - y_min) * (self.y_zoom / 100.0);
 
                 self.canvas_indicator_volume.render(&visible_klines);
                 
@@ -360,6 +364,7 @@ impl CanvasManager {
                     }
                 }
 
+                let bucket_size = self.bucket_size.read().unwrap();
                 match (self.orderbook_manager.bids.try_read(), self.orderbook_manager.asks.try_read()) {
                     (Ok(bids_borrowed), Ok(asks_borrowed)) => {
                         let num_possible_lines = (y_max - y_min) / *bucket_size;
@@ -419,14 +424,12 @@ impl CanvasManager {
         }
     }
 
-    pub fn pan_x(&mut self, x: f64) {
-        self.pan_x_offset += x * 1.5;
+    pub fn pan_xy(&mut self, x: f64, y: f64) {
+        self.pan_x_offset += x;
         if self.pan_x_offset < 0.0 {
             self.pan_x_offset = 0.0;
         }
-        self.canvas_main.pan_x_offset = self.pan_x_offset;
-        self.canvas_indi_cvd.pan_x_offset = self.pan_x_offset;
-        self.canvas_indicator_volume.pan_x_offset = self.pan_x_offset;
+        self.pan_y_offset += y;
     }
     pub fn zoom_x(&mut self, x: f64) {
         let factor = if x > 0.0 { 0.9 } else { 1.1 };
@@ -441,8 +444,10 @@ impl CanvasManager {
         self.canvas_main.x_zoom = self.x_zoom;
         self.canvas_indi_cvd.x_zoom = self.x_zoom;
         self.canvas_indicator_volume.x_zoom = self.x_zoom;
-    }    
-
+    }
+    pub fn zoom_y(&mut self, y: f64) {
+        self.y_zoom += y*0.02;
+    }
     pub fn resize(&mut self, new_widths: &[f64], new_heights: &[f64]) {
         self.canvas_main.resize(new_widths[0], new_heights[0]);
         self.canvas_orderbook.resize(new_widths[1], new_heights[1]);
@@ -710,7 +715,6 @@ pub struct CanvasMain {
     width: f64,
     height: f64,
     x_zoom: f64,
-    pan_x_offset: f64,
 }
 impl CanvasMain {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -725,7 +729,6 @@ impl CanvasMain {
                     width,
                     height,
                     x_zoom: 30.0,
-                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -830,7 +833,6 @@ pub struct CanvasIndicatorVolume {
     width: f64,
     height: f64,
     x_zoom: f64,
-    pan_x_offset: f64,
 }
 impl CanvasIndicatorVolume {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -845,7 +847,6 @@ impl CanvasIndicatorVolume {
                     width,
                     height,
                     x_zoom: 30.0,
-                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -893,7 +894,6 @@ pub struct CanvasIndiCVD {
     width: f64,
     height: f64,
     x_zoom: f64,
-    pan_x_offset: f64,
 }
 impl CanvasIndiCVD {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -908,7 +908,6 @@ impl CanvasIndiCVD {
                     width,
                     height,
                     x_zoom: 30.0,
-                    pan_x_offset: 0.0,
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
