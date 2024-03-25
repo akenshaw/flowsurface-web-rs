@@ -485,19 +485,19 @@ async function getHistTrades(symbol, dp, manager) {
 let canvasMain = document.querySelector("#canvas-main");
 let canvasIndi1 = document.querySelector("#canvas-indi-1");
 let canvasIndi2 = document.querySelector("#canvas-indi-2");
+let canvasDepth = document.querySelector("#canvas-depth");
 
 // Panning
 let isDragging = false;
-let startDragX = 0;
+let initialXY = [0, 0];
 canvasMain.addEventListener("mousedown", function (event) {
   isDragging = true;
-  startDragX = event.clientX;
+  initialXY = { x: event.clientX, y: event.clientY };
 });
 canvasMain.addEventListener("mousemove", function (event) {
   if (isDragging) {
-    let dx = event.clientX - startDragX;
-    manager.pan_x(dx);
-    startDragX = event.clientX;
+    manager.pan_xy(event.clientX - initialXY.x, event.clientY - initialXY.y);
+    initialXY = { x: event.clientX, y: event.clientY };
   }
 });
 canvasMain.addEventListener("mouseup", function (event) {
@@ -515,4 +515,17 @@ canvasIndi1.addEventListener("wheel", function (event) {
 canvasIndi2.addEventListener("wheel", function (event) {
   event.preventDefault();
   manager.zoom_x(-event.deltaY);
+});
+
+// Zoom Y
+canvasDepth.addEventListener("wheel", function (event) {
+  event.preventDefault();
+  manager.zoom_y(event.deltaY);
+});
+
+// Zoom XY
+canvasMain.addEventListener("wheel", function (event) {
+  event.preventDefault();
+  manager.zoom_x(-event.deltaY);
+  manager.zoom_y(event.deltaY);
 });
