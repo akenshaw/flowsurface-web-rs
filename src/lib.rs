@@ -718,7 +718,8 @@ impl CanvasOrderbook {
         let max_quantity_str = format!("{:.1}", max_quantity);
         context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
         context.set_font("18px monospace");
-        context.fill_text(&max_quantity_str, self.width - 100.0, 20.0).unwrap();
+        let text_metrics = context.measure_text(&max_quantity_str).unwrap();
+        context.fill_text(&max_quantity_str, self.width - text_metrics.width() - 6.0, 20.0).unwrap();
     } 
 }
 pub struct CanvasMain {
@@ -767,7 +768,6 @@ impl CanvasMain {
             let height_per_line = (self.height / num_possible_lines).round();
             let font_size = (height_per_line / 2.0).round();
     
-            context.set_line_width(1.0);
             context.set_font(&format!("{}px monospace", font_size));
             for (_i, (_, kline)) in klines.iter().enumerate() {
                 let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
@@ -831,6 +831,7 @@ impl CanvasMain {
                     context.stroke();
                 }
                 context.set_stroke_style(&(if kline.open < kline.close { "rgba(50, 200, 50, 1)" } else { "rgba(200, 50, 50, 1)" }).into());
+                context.set_line_width(6.0);
                 context.begin_path();
                 context.move_to(x + rect_width, self.height - y_open);
                 context.line_to(x + rect_width, self.height - y_close);
@@ -881,6 +882,7 @@ impl CanvasIndicatorVolume {
                 let max_volume = klines.iter().map(|(_, kline)| f64::max(kline.buy_volume, kline.sell_volume)).fold(0.0, f64::max);
                 let time_difference = **last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
 
+                context.set_font("20px monospace");
                 for (_i, (_, kline)) in klines.iter().enumerate() {
                     let x = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
                 
@@ -892,6 +894,18 @@ impl CanvasIndicatorVolume {
                 
                     context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
                     context.fill_rect(x + 10.0, self.height as f64 - sell_height, rect_width - 10.0, sell_height);
+
+                    if self.x_zoom < 18.0 {
+                        let text_height = 20.0 + 2.0 * 2.0; // font size + padding + margin            
+                        context.set_fill_style(&"white".into());
+                
+                        if buy_height > text_height {
+                            context.fill_text(&format!("{:.2}", kline.buy_volume), x + rect_width + 6.0, self.height as f64 - buy_height + 20.0).unwrap();
+                        }
+                        if sell_height > text_height {
+                            context.fill_text(&format!("{:.2}", kline.sell_volume), x + 14.0, self.height as f64 - sell_height + 20.0).unwrap();
+                        }
+                    }
                 }
             },
             None => {
