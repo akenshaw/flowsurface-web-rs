@@ -54,6 +54,17 @@ pub struct GroupedTrades {
     sells: HashMap<i64, f64>,
 }
 
+const MINUTE_IN_MS: u64 = 60 * 1000;
+
+macro_rules! try_clear {
+    ($lock:expr, $name:expr) => {
+        match $lock.try_write() {
+            Ok(mut data) => data.clear(),
+            Err(_) => log(format!("Failed to acquire write lock on {} during clear_datasets", $name).as_str()),
+        }
+    };
+}
+
 #[wasm_bindgen]
 pub struct CanvasManager {
     klines_ohlcv: Arc<RwLock<BTreeMap<u64, Kline>>>,
@@ -146,7 +157,7 @@ impl CanvasManager {
                     },
                     Some(stream) if stream.contains("depth") => {
                         if let Some(bids_array) = v["data"]["b"].as_array() {
-                            if let Ok(mut bids_borrowed) = bids.try_write() {
+                            if let Ok(mut bids_borrowed) = bids.write() {
                                 let min_price = bids_borrowed.iter().map(|x| x.price).fold(f64::INFINITY, |a, b| a.min(b));
                                 let bids_array: Vec<&Value> = bids_array.iter().filter(|x| {
                                     if let Some(price) = x[0].as_str().and_then(|s| s.parse::<f64>().ok()) {
@@ -177,7 +188,7 @@ impl CanvasManager {
                             }
                         }
                         if let Some(asks_array) = v["data"]["a"].as_array() {
-                            if let Ok(mut asks_borrowed) = asks.try_write() {
+                            if let Ok(mut asks_borrowed) = asks.write() {
                                 let max_price = asks_borrowed.iter().map(|x| x.price).fold(f64::NEG_INFINITY, |a, b| a.max(b));
                                 let asks_array: Vec<&Value> = asks_array.iter().filter(|x| {
                                     if let Some(price) = x[0].as_str().and_then(|s| s.parse::<f64>().ok()) {
@@ -209,7 +220,7 @@ impl CanvasManager {
                         }
                         if let Some(update_time) = v["data"]["T"].as_u64() {
                             if current_kline_open != 0 {
-                                match klines_trades.try_write() {
+                                match klines_trades.write() {
                                     Ok(mut klines_trades) => {
                                         let mut canvas_bubble = canvas_bubble.borrow_mut();
                                         canvas_bubble.render(&trades_buffer, update_time);
@@ -301,7 +312,7 @@ impl CanvasManager {
                                     cum_volume_delta,
                                     close_time,
                                 };
-                                if let Ok(mut klines_ohlcv) = klines_ohlcv.try_write() {
+                                if let Ok(mut klines_ohlcv) = klines_ohlcv.write() {
                                     klines_ohlcv.insert(open_time, kline);  
                                 }
                                 current_kline_open = open_time;
@@ -322,15 +333,15 @@ impl CanvasManager {
         self.websocket = Some(ws);
     }   
 
-    pub fn render(&mut self) {
+    pub fn render_start(&mut self) {
         match self.klines_ohlcv.try_read() {
             Ok(klines_borrowed) => {
                 let last_kline_open: u64 = match klines_borrowed.iter().last() {
                     Some((last_kline_open, _)) => *last_kline_open,
                     None => return, 
                 };
-                let zoom_scale: f64 = self.x_zoom * 60.0 * 1000.0;
-                let time_difference: f64 = last_kline_open as f64 + 60000.0 - zoom_scale;
+                let zoom_scale: f64 = self.x_zoom * MINUTE_IN_MS as f64;
+                let time_difference: f64 = last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
 
                 let left_x: f64 = 0.0 - self.pan_x_offset;
                 let right_x: f64 = self.canvas_main.width - self.pan_x_offset;
@@ -600,9 +611,9 @@ impl CanvasManager {
     }
 
     pub fn clear_datasets(&mut self) {
-        self.klines_ohlcv.write().unwrap().clear();
-        self.klines_trades.write().unwrap().clear();
-        self.oi_datapoints.write().unwrap().clear();
+        try_clear!(self.oi_datapoints, "oi_datapoints");
+        try_clear!(self.klines_ohlcv, "klines_ohlcv");
+        try_clear!(self.klines_trades, "klines_trades");
         self.canvas_bubble.borrow_mut().reset();
     }
 }
@@ -745,8 +756,8 @@ impl CanvasMain {
         context.clear_rect(0.0, 0.0, self.width, self.height);
         
         if let Some((last_kline_open, _)) = klines.iter().last() {
-            let zoom_scale = self.x_zoom * 60.0 * 1000.0;
-            let time_difference: f64 = **last_kline_open as f64 + 60000.0 - zoom_scale;
+            let zoom_scale = self.x_zoom * MINUTE_IN_MS as f64;
+            let time_difference: f64 = **last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
             let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
             
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
@@ -862,13 +873,13 @@ impl CanvasIndicatorVolume {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
         
-        let zoom_scale = self.x_zoom * 60.0 * 1000.0;
+        let zoom_scale = self.x_zoom * MINUTE_IN_MS as f64;
         let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
 
         match klines.iter().last() {
             Some((last_kline_open, _)) => {
                 let max_volume = klines.iter().map(|(_, kline)| f64::max(kline.buy_volume, kline.sell_volume)).fold(0.0, f64::max);
-                let time_difference = **last_kline_open as f64 + 60000.0 - zoom_scale;
+                let time_difference = **last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
 
                 for (_i, (_, kline)) in klines.iter().enumerate() {
                     let x = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
@@ -923,14 +934,14 @@ impl CanvasIndiCVD {
         let context = &self.ctx;
         context.clear_rect(0.0, 0.0, self.width, self.height);
     
-        let zoom_scale = self.x_zoom * 60.0 * 1000.0;
+        let zoom_scale = self.x_zoom * MINUTE_IN_MS as f64;
         
         match klines.iter().last() {
             Some((last_kline_open, _)) => {
                 let max_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(0.0, f64::max);
                 let min_cvd = klines.iter().map(|(_, kline)| kline.cum_volume_delta).fold(f64::MAX, f64::min);
 
-                let time_difference = *last_kline_open + 60000 - zoom_scale as u64;
+                let time_difference = *last_kline_open + MINUTE_IN_MS - zoom_scale as u64;
                 let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
 
                 let mut previous_point: Option<(f64, f64)> = None;
@@ -1179,7 +1190,7 @@ impl OrderbookManager {
                         }
                     }
 
-                    if let Ok(mut last_update_id) = self.last_update_id.write() {
+                    if let Ok(mut last_update_id) = self.last_update_id.try_write() {
                         if let Some(last_update_id_val) = depth["lastUpdateId"].as_u64() {
                             *last_update_id = last_update_id_val;
                         }
