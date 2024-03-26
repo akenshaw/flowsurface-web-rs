@@ -364,8 +364,8 @@ function changeSymbol(newSymbol) {
   });
   initialKlineFetch(currentSymbol).then((klines) => {
     manager.gather_klines(klines);
-    //const keys = manager.get_kline_ohlcv_keys();
-    //getHistTrades(currentSymbol, keys, manager);
+    const keys = manager.get_kline_ohlcv_keys();
+    getHistTrades(currentSymbol, keys, manager);
   });
   fetchHistOI(currentSymbol).then((histOI) => {
     manager.gather_hist_oi(histOI);
