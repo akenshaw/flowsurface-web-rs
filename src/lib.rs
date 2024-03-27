@@ -358,8 +358,9 @@ impl CanvasManager {
                 }).collect();
                                                 
                 let avg_body_length: f64 = visible_klines.iter()
+                    .take(visible_klines.len() - 1) 
                     .map(|(_, kline)| (kline.close - kline.open).abs())
-                    .sum::<f64>() / visible_klines.len() as f64;
+                    .sum::<f64>() / (visible_klines.len() - 1) as f64;
 
                 let mut y_max: f64;
                 let mut y_min: f64;
