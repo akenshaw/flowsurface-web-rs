@@ -632,6 +632,8 @@ impl CanvasManager {
 
     pub fn toggle_autoscale(&mut self) {
         self.autoscale = !self.autoscale;
+        self.y_zoom = 10.0;
+        self.pan_y_offset = 0.0;
     }
     pub fn get_autoscale(&self) -> bool {
         self.autoscale
@@ -862,7 +864,18 @@ impl CanvasMain {
                 context.begin_path();
                 context.move_to(x + rect_width, self.height - y_open);
                 context.line_to(x + rect_width, self.height - y_close);
-                context.stroke();                
+                context.stroke();    
+
+                // time labels from kline.open_time
+                let text_height = 20.0 + 1.0 * 1.0; // font size + padding + margin
+                if kline.open_time % (MINUTE_IN_MS as u64) == 0 {
+                    context.set_font("20px monospace");
+                    context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
+                    let hour = (kline.open_time / 3600000) % 24;
+                    let minute = (kline.open_time / 60000) % 60;
+                    let text_metrics = context.measure_text(&format!("{:02}:{:02}", hour, minute)).unwrap();
+                    context.fill_text(&format!("{:02}:{:02}", hour, minute), x + rect_width - text_metrics.width() / 2.0, self.height - text_height).unwrap();              
+                }        
             }
         }
     }
