@@ -202,8 +202,8 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper352": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper352"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper345": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper345"](p0i32,p1i32,p2i32);
 /******/ 					},
 /******/ 					"__wbindgen_closure_wrapper386": function(p0i32,p1i32,p2i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper386"](p0i32,p1i32,p2i32);
@@ -309,7 +309,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"7be520c02f46caddf5c2"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"40a87e245c22f0fa4213"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
