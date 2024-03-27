@@ -76,6 +76,7 @@ pub struct CanvasManager {
     canvas_indicator_volume: CanvasIndicatorVolume,
     canvas_bubble: Rc<RefCell<CanvasBubbleTrades>>,
     canvas_indi_cvd: CanvasIndiCVD,
+    autoscale: bool,
     pan_x_offset: f64,
     pan_y_offset: f64,
     x_zoom: f64,
@@ -83,7 +84,9 @@ pub struct CanvasManager {
     bucket_size: Arc<RwLock<f64>>,
     last_depth_update: Rc<RefCell<u64>>,
     websocket: Option<WebSocket>,
-    tick_size: Rc<RefCell<f64>>
+    tick_size: Rc<RefCell<f64>>,   
+    fixed_y_max: f64,
+    fixed_y_min: f64,
 }
 #[wasm_bindgen]
 impl CanvasManager {
@@ -99,6 +102,7 @@ impl CanvasManager {
             canvas_indicator_volume: CanvasIndicatorVolume::new(canvas3).expect("Failed to create CanvasIndicatorVolume"),
             canvas_bubble: Rc::new(RefCell::new(CanvasBubbleTrades::new(canvas4).expect("Failed to create CanvasBubbleTrades"))),
             canvas_indi_cvd: CanvasIndiCVD::new(canvas5).expect("Failed to create CanvasIndiCVD"),
+            autoscale: true,
             pan_x_offset: 0.0,
             pan_y_offset: 0.0,
             x_zoom: 30.0,
@@ -107,6 +111,8 @@ impl CanvasManager {
             last_depth_update: Rc::new(RefCell::new(0)),
             websocket: None,
             tick_size: Rc::new(RefCell::new(0.1)),
+            fixed_y_max: 0.0,
+            fixed_y_min: 0.0,
         }
     }
     
@@ -355,11 +361,25 @@ impl CanvasManager {
                     .map(|(_, kline)| (kline.close - kline.open).abs())
                     .sum::<f64>() / visible_klines.len() as f64;
 
-                let mut y_max: f64 = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
-                let mut y_min: f64 = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length; 
-                y_max += (y_max - y_min) * (self.pan_y_offset / self.canvas_main.height) + (y_max - y_min) * (self.y_zoom / 100.0);
-                y_min += (y_max - y_min) * (self.pan_y_offset / self.canvas_main.height) - (y_max - y_min) * (self.y_zoom / 100.0);
+                let mut y_max: f64;
+                let mut y_min: f64;
+                
+                if self.autoscale | (self.fixed_y_max == 0.0 && self.fixed_y_min == 0.0) {
+                    y_max = visible_klines.iter().map(|(_, kline)| kline.high).fold(0.0, f64::max) + avg_body_length;
+                    y_min = visible_klines.iter().map(|(_, kline)| kline.low).fold(f64::MAX, f64::min) - avg_body_length; 
+                
+                    self.fixed_y_max = y_max;
+                    self.fixed_y_min = y_min;
+                } else {
+                    y_max = self.fixed_y_max;
+                    y_min = self.fixed_y_min;
 
+                    let range = self.fixed_y_max - self.fixed_y_min;
+                
+                    y_max += range * (self.pan_y_offset / self.canvas_main.height) + range * (self.y_zoom / 100.0);
+                    y_min += range * (self.pan_y_offset / self.canvas_main.height) - range * (self.y_zoom / 100.0);
+                } 
+                    
                 self.canvas_indicator_volume.render(&visible_klines);
                 
                 match self.oi_datapoints.try_read() {
@@ -610,6 +630,13 @@ impl CanvasManager {
         }
     }
 
+    pub fn toggle_autoscale(&mut self) {
+        self.autoscale = !self.autoscale;
+    }
+    pub fn get_autoscale(&self) -> bool {
+        self.autoscale
+    }
+
     pub fn clear_datasets(&mut self) {
         try_clear!(self.oi_datapoints, "oi_datapoints");
         try_clear!(self.klines_ohlcv, "klines_ohlcv");
@@ -831,7 +858,7 @@ impl CanvasMain {
                     context.stroke();
                 }
                 context.set_stroke_style(&(if kline.open < kline.close { "rgba(50, 200, 50, 1)" } else { "rgba(200, 50, 50, 1)" }).into());
-                context.set_line_width(6.0);
+                context.set_line_width(rect_width/44.0);
                 context.begin_path();
                 context.move_to(x + rect_width, self.height - y_open);
                 context.line_to(x + rect_width, self.height - y_close);
@@ -897,7 +924,7 @@ impl CanvasIndicatorVolume {
 
                     if self.x_zoom < 18.0 {
                         let text_height = 20.0 + 2.0 * 2.0; // font size + padding + margin            
-                        context.set_fill_style(&"white".into());
+                        context.set_fill_style(&"black".into());
                 
                         if buy_height > text_height {
                             context.fill_text(&format!("{:.2}", kline.buy_volume), x + rect_width + 6.0, self.height as f64 - buy_height + 20.0).unwrap();
@@ -980,13 +1007,17 @@ impl CanvasIndiCVD {
                     Some((_oi_last_time, _)) => {
                         let max_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(0.0, f64::max);
                         let min_oi = oi_obj.iter().map(|(_, oi)| *oi).fold(f64::MAX, f64::min);
-        
+
                         let time_difference = *last_kline_open + 60000 - zoom_scale as u64;
                         let padding_ratio = 0.1; 
                         let padded_height = self.height as f64 * (1.0 - padding_ratio);
                         let padding = self.height as f64 * padding_ratio / 2.0;
-            
+
                         context.set_fill_style(&"white".into());
+                        context.set_font("20px monospace");
+
+                        let mut previous_oi = None;
+
                         for (_i, (time, oi)) in oi_obj.iter().enumerate() {
                             let x = ((time - time_difference) as f64 / zoom_scale) * self.width;
                             let y = if max_oi == min_oi {
@@ -994,10 +1025,20 @@ impl CanvasIndiCVD {
                             } else {
                                 padded_height * (*oi - min_oi) / (max_oi - min_oi) + padding
                             };
-                            
                             context.begin_path();
                             context.arc(x, self.height - y, 4.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
                             context.fill();
+
+                            if let Some(prev_oi) = previous_oi {
+                                if self.x_zoom < 18.0 {
+                                    let diff = (*oi as f64 - prev_oi as f64).round();
+                                    context.set_fill_style(&"rgba(200, 200, 200, 0.8".into());
+                                    let measured_text = context.measure_text(&format!("{:+}", diff)).unwrap();
+                                    context.fill_text(&format!("{:+}", diff), x - measured_text.width() - 12.0, self.height - y + 6.0).unwrap();
+                                    context.set_fill_style(&"white".into());
+                                }
+                            }
+                            previous_oi = Some(*oi);
                         }
                     },
                     None => {
