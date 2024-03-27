@@ -351,7 +351,13 @@ let canvasIds = [
   "#canvas-bubble",
   "#canvas-indi-1",
 ];
-let canvases = canvasIds.map((id) => document.querySelector(id));
+
+let canvases = canvasIds.map((id) => {
+  let canvas = document.querySelector(id);
+  let ctx = canvas.getContext("2d", { alpha: false });
+  return canvas;
+});
+
 canvases.forEach(adjustDPI);
 
 let currentSymbol = "btcusdt";
@@ -360,9 +366,13 @@ let depthIntervalId, oiIntervalId;
 let manager = wasm_module.CanvasManager.new(...canvases);
 changeSymbol(currentSymbol);
 
-setInterval(() => {
+function renderLoop() {
   manager.render_start();
-}, 1000 / 30);
+  setTimeout(() => {
+    requestAnimationFrame(renderLoop);
+  }, 1000 / 30);
+}
+requestAnimationFrame(renderLoop);
 
 const tickSizeBtn = document.querySelector("#ticksize-select");
 tickSizeBtn.addEventListener("change", function () {
