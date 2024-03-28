@@ -306,33 +306,6 @@ function debounce(func, wait) {
   };
 }
 
-function adjustDPIonResize(canvas, index) {
-  let dpi = window.devicePixelRatio;
-  let style_height = +getComputedStyle(canvas)
-    .getPropertyValue("height")
-    .slice(0, -2);
-  let style_width = +getComputedStyle(canvas)
-    .getPropertyValue("width")
-    .slice(0, -2);
-  canvas.setAttribute("height", style_height * dpi);
-  canvas.setAttribute("width", style_width * dpi);
-
-  new_widths[index] = style_width * dpi;
-  new_heights[index] = style_height * dpi;
-}
-
-let new_widths = [];
-let new_heights = [];
-
-window.addEventListener(
-  "resize",
-  debounce(() => {
-    console.log("resizing...");
-    canvases.forEach((canvas, i) => adjustDPIonResize(canvas, i));
-    manager.resize(new_widths, new_heights);
-  }, 300)
-);
-
 function adjustDPI(canvas) {
   let dpi = window.devicePixelRatio;
   let style_height = +getComputedStyle(canvas)
@@ -343,7 +316,9 @@ function adjustDPI(canvas) {
     .slice(0, -2);
   canvas.setAttribute("height", style_height * dpi);
   canvas.setAttribute("width", style_width * dpi);
+  return { width: style_width * dpi, height: style_height * dpi };
 }
+
 let canvasIds = [
   "#canvas-main",
   "#canvas-depth",
@@ -351,19 +326,28 @@ let canvasIds = [
   "#canvas-bubble",
   "#canvas-indi-1",
 ];
-
 let canvases = canvasIds.map((id) => {
   let canvas = document.querySelector(id);
-  let ctx = canvas.getContext("2d", { alpha: false });
+  canvas.getContext("2d", { alpha: false });
   return canvas;
 });
+let dimensions = canvases.map(adjustDPI);
 
-canvases.forEach(adjustDPI);
-
-let currentSymbol = "btcusdt";
-let depthIntervalId, oiIntervalId;
+window.addEventListener(
+  "resize",
+  debounce(() => {
+    console.log("resizing...");
+    dimensions = canvases.map(adjustDPI);
+    manager.resize(
+      dimensions.map((d) => d.width),
+      dimensions.map((d) => d.height)
+    );
+  }, 300)
+);
 
 let manager = wasm_module.CanvasManager.new(...canvases);
+let depthIntervalId, oiIntervalId;
+let currentSymbol = "btcusdt";
 changeSymbol(currentSymbol);
 
 function renderLoop() {
@@ -373,11 +357,6 @@ function renderLoop() {
   }, 1000 / 30);
 }
 requestAnimationFrame(renderLoop);
-
-const tickSizeBtn = document.querySelector("#ticksize-select");
-tickSizeBtn.addEventListener("change", function () {
-  manager.set_tick_size(tickSizeBtn.value);
-});
 
 function changeSymbol(newSymbol) {
   depthIntervalId ? clearInterval(depthIntervalId) : null;
@@ -437,6 +416,11 @@ function scheduleFetchOI() {
     }, 60000);
   }, delay);
 }
+
+const tickSizeBtn = document.querySelector("#ticksize-select");
+tickSizeBtn.addEventListener("change", function () {
+  manager.set_tick_size(tickSizeBtn.value);
+});
 
 async function getHistTrades(symbol, dp, manager) {
   // get current kline first
