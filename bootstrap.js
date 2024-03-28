@@ -79,6 +79,12 @@
 /******/ 					"__wbg_queueMicrotask_481971b0d87f3dd4": function(p0i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_queueMicrotask_481971b0d87f3dd4"](p0i32);
 /******/ 					},
+/******/ 					"__wbg_instanceof_Window_f401953a2cf86220": function(p0i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_instanceof_Window_f401953a2cf86220"](p0i32);
+/******/ 					},
+/******/ 					"__wbg_devicePixelRatio_efc553b59506f64c": function(p0i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbg_devicePixelRatio_efc553b59506f64c"](p0i32);
+/******/ 					},
 /******/ 					"__wbindgen_object_clone_ref": function(p0i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_object_clone_ref"](p0i32);
 /******/ 					},
@@ -202,11 +208,11 @@
 /******/ 					"__wbindgen_throw": function(p0i32,p1i32) {
 /******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_throw"](p0i32,p1i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper345": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper345"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper354": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper354"](p0i32,p1i32,p2i32);
 /******/ 					},
-/******/ 					"__wbindgen_closure_wrapper386": function(p0i32,p1i32,p2i32) {
-/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper386"](p0i32,p1i32,p2i32);
+/******/ 					"__wbindgen_closure_wrapper395": function(p0i32,p1i32,p2i32) {
+/******/ 						return installedModules["../pkg/rsdepth_bg.js"].exports["__wbindgen_closure_wrapper395"](p0i32,p1i32,p2i32);
 /******/ 					}
 /******/ 				}
 /******/ 			};
@@ -309,7 +315,7 @@
 /******/ 				promises.push(installedWasmModuleData);
 /******/ 			else {
 /******/ 				var importObject = wasmImportObjects[wasmModuleId]();
-/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"086b32094028edc2619a"}[wasmModuleId] + ".module.wasm");
+/******/ 				var req = fetch(__webpack_require__.p + "" + {"../pkg/rsdepth_bg.wasm":"b24083cd5f1844fde50f"}[wasmModuleId] + ".module.wasm");
 /******/ 				var promise;
 /******/ 				if(importObject instanceof Promise && typeof WebAssembly.compileStreaming === 'function') {
 /******/ 					promise = Promise.all([WebAssembly.compileStreaming(req), importObject]).then(function(items) {
