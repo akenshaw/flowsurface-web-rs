@@ -714,7 +714,7 @@ impl CanvasOrderbook {
         if let Some(_best_bid) = bids.first() {     
             context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
             for (_i, bid) in bids.iter().enumerate() {
-                let x = (bid.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 20.0*self.dpi) as f64;
+                let x = (bid.quantity / (max_quantity + max_quantity/4.0)) * (self.width - (self.width/12.0)) as f64;
                 let y = ((bid.price - y_min) / (y_max - y_min)) * self.height as f64;
                 let y_top = self.height - y - height_per_line / 2.0;
                 context.fill_rect(self.dpi*60.0, y_top, x, height_per_line);
@@ -723,7 +723,7 @@ impl CanvasOrderbook {
         if let Some(_best_ask) = asks.first() {
             context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             for (_i, ask) in asks.iter().enumerate() {
-                let x = (ask.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 20.0*self.dpi) as f64;
+                let x = (ask.quantity / (max_quantity + max_quantity/4.0)) * (self.width - (self.width/12.0)) as f64;
                 let y = ((ask.price - y_min) / (y_max - y_min)) * self.height as f64;
                 let y_top = self.height - y - height_per_line / 2.0;
                 context.fill_rect(self.dpi*60.0, y_top, x, height_per_line);
@@ -799,13 +799,13 @@ impl CanvasMain {
             let zoom_scale = self.x_zoom * MINUTE_IN_MS as f64;
             let time_difference: f64 = **last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
             let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
-            
+
             let max_quantity = trades.iter().flat_map(|(_, trade_groups)| {
                 trade_groups.buys.iter().chain(trade_groups.sells.iter()).map(|(_, quantity)| *quantity)
             }).fold(0.0, f64::max);
 
             let height_per_line = (self.height / num_possible_lines).round();
-            let font_size = ((height_per_line / 2.0)/self.dpi).round();
+            let font_size = (height_per_line/2.6).round();
     
             for (_i, (_, kline)) in klines.iter().enumerate() {
                 let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
@@ -829,7 +829,7 @@ impl CanvasMain {
 
                         context.fill_rect(x + rect_width + 4.0, y_top, scaled_quantity, height_per_line);
                         
-                        if height_per_line > 25.0 {
+                        if font_size > (6.0*self.dpi)&& rect_width > 60.0 {
                             let quantity_str = format!("{:.3}", quantity);
                             texts.push((quantity_str, x + rect_width + 6.0, (y_top + height_per_line / 2.0 + font_size / 3.0))); 
                         }
@@ -849,7 +849,7 @@ impl CanvasMain {
 
                         context.fill_rect(x + rect_width - 4.0, y_top, -scaled_quantity, height_per_line);
                         
-                        if height_per_line > 25.0 {
+                        if font_size > (6.0*self.dpi)&& rect_width > 60.0 {
                             let quantity_str = format!("{:.3}", quantity);
                             let text_metrics = context.measure_text(&quantity_str).unwrap();
                             texts.push((quantity_str, x + rect_width - 6.0 - text_metrics.width(), (y_top + height_per_line / 2.0 + font_size / 3.0))); 
@@ -950,7 +950,7 @@ impl CanvasIndicatorVolume {
                     context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
                     context.fill_rect(x + 10.0, self.height as f64 - sell_height, rect_width - 10.0, sell_height);
 
-                    if self.x_zoom < 18.0 {
+                    if self.x_zoom < 18.0 && rect_width > 60.0{
                         let text_height = font_size + 2.0 * 2.0; // font size + padding + margin            
                         context.set_fill_style(&"black".into());
                 
@@ -1017,11 +1017,19 @@ impl CanvasIndiCVD {
                 let time_difference = *last_kline_open + MINUTE_IN_MS - zoom_scale as u64;
                 let rect_width: f64 = (self.width as f64 / &self.x_zoom)/2.0;
 
+                let padding_ratio = 0.1; 
+                let padded_height = self.height as f64 * (1.0 - padding_ratio);
+                let padding = self.height as f64 * padding_ratio / 2.0;
+
                 let mut previous_point: Option<(f64, f64)> = None;
                 context.set_stroke_style(&"rgba(238, 216, 139, 0.4)".into());
                 for (_i, (_, kline)) in klines.iter().enumerate() {
                     let x = ((kline.open_time - time_difference) as f64 / zoom_scale) * self.width;
-                    let y = self.height as f64 * (kline.cum_volume_delta - min_cvd) / (max_cvd - min_cvd);
+                    let y = if max_cvd == min_cvd {
+                        padded_height / 2.0 + padding
+                    } else {
+                        padded_height * (kline.cum_volume_delta - min_cvd) / (max_cvd - min_cvd) + padding
+                    };
             
                     match previous_point {
                         Some((prev_x, prev_y)) => {
@@ -1067,7 +1075,7 @@ impl CanvasIndiCVD {
                                     let diff = (*oi as f64 - prev_oi as f64).round();
                                     context.set_fill_style(&"rgba(200, 200, 200, 0.8".into());
                                     let measured_text = context.measure_text(&format!("{:+}", diff)).unwrap();
-                                    context.fill_text(&format!("{:+}", diff), x - measured_text.width() - 12.0, self.height - y + 6.0).unwrap();
+                                    context.fill_text(&format!("{:+}", diff), x - measured_text.width() - 12.0, self.height - y + (3.0*self.dpi)).unwrap();
                                     context.set_fill_style(&"white".into());
                                 }
                             }
