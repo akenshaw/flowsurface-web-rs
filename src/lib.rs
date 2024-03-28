@@ -798,7 +798,6 @@ impl CanvasMain {
             let height_per_line = (self.height / num_possible_lines).round();
             let font_size = (height_per_line / 2.0).round();
     
-            context.set_font(&format!("{}px monospace", font_size));
             for (_i, (_, kline)) in klines.iter().enumerate() {
                 let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
 
@@ -807,6 +806,7 @@ impl CanvasMain {
                 let y_high = self.height as f64 * (kline.high - y_min) / (y_max - y_min);
                 let y_low = self.height as f64 * (kline.low - y_min) / (y_max - y_min);
 
+                context.set_font(&format!("{}px monospace", font_size));
                 if let Some((_, trade_groups)) = trades.iter().find(|&&(time, _)| time == kline.open_time) {
                     context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
                     let mut texts = Vec::new(); 
@@ -941,10 +941,10 @@ impl CanvasIndicatorVolume {
                         context.set_fill_style(&"black".into());
                 
                         if buy_height > text_height {
-                            context.fill_text(&format!("{:.2}", kline.buy_volume), x + rect_width + 6.0, self.height as f64 - buy_height + 20.0).unwrap();
+                            context.fill_text(&format!("{:.2}", kline.buy_volume), x + rect_width + 6.0, self.height as f64 - buy_height + text_height).unwrap();
                         }
                         if sell_height > text_height {
-                            context.fill_text(&format!("{:.2}", kline.sell_volume), x + 14.0, self.height as f64 - sell_height + 20.0).unwrap();
+                            context.fill_text(&format!("{:.2}", kline.sell_volume), x + 14.0, self.height as f64 - sell_height + text_height).unwrap();
                         }
                     }
                 }
