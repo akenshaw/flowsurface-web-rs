@@ -7,7 +7,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 
 use wasm_bindgen::{JsCast, prelude::*};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, MessageEvent, WebSocket, window};
 use serde_json::Value;
 
 extern crate js_sys;
@@ -651,6 +651,7 @@ pub struct CanvasOrderbook {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
+    dpi: f64,
 }
 impl CanvasOrderbook {
     pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
@@ -660,10 +661,12 @@ impl CanvasOrderbook {
         match canvas.get_context("2d") {
             Ok(Some(context)) => {
                 let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                let dpi = window().unwrap().device_pixel_ratio();
                 Ok(Self {
                     ctx,
                     width,
                     height,
+                    dpi
                 })
             },
             Ok(None) => Err(JsValue::from_str("No 2D context available")),
@@ -673,8 +676,9 @@ impl CanvasOrderbook {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+        self.dpi = window().unwrap().device_pixel_ratio();
     }
-
+    
     pub fn render(&mut self, y_min: f64, y_max: f64, bids: Vec<Order>, asks: Vec<Order>, klines: &Vec<(&u64, &Kline)>, last_depth_update: &Rc<RefCell<u64>>, decimals: i32, num_possible_lines: f64) {
         let context = &self.ctx;
         self.ctx.clear_rect(0.0, 0.0, self.width, self.height);
@@ -687,8 +691,14 @@ impl CanvasOrderbook {
 
         let num_labels = 12; 
         let step = (y_max - y_min) / num_labels as f64;
-        context.set_font("20px monospace");
+
+        let font_size = (12.0 * self.dpi as f64).round();
+        context.set_font(&format!("{}px monospace", font_size));
         context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
+
+        let max_quantity_str = format!("{:.1}", max_quantity);
+        let text_metrics = context.measure_text(&max_quantity_str).unwrap();
+        context.fill_text(&max_quantity_str, self.width - text_metrics.width() - 6.0, 20.0).unwrap();
         
         for i in 0..=num_labels {
             let y_value = y_min + step * i as f64;
@@ -696,7 +706,7 @@ impl CanvasOrderbook {
 
             let y_value_str = format!("{:.*}", decimals as usize, y_value);
 
-            context.fill_text(&y_value_str, 6.0, y).unwrap();
+            context.fill_text(&y_value_str, 2.0*self.dpi, y).unwrap();
         }
 
         let height_per_line = (self.height / num_possible_lines).round();
@@ -704,24 +714,24 @@ impl CanvasOrderbook {
         if let Some(_best_bid) = bids.first() {     
             context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
             for (_i, bid) in bids.iter().enumerate() {
-                let x = (bid.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 120.0) as f64;
+                let x = (bid.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 20.0*self.dpi) as f64;
                 let y = ((bid.price - y_min) / (y_max - y_min)) * self.height as f64;
                 let y_top = self.height - y - height_per_line / 2.0;
-                context.fill_rect(108.0, y_top, x, height_per_line);
+                context.fill_rect(self.dpi*60.0, y_top, x, height_per_line);
             }
         }
         if let Some(_best_ask) = asks.first() {
             context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             for (_i, ask) in asks.iter().enumerate() {
-                let x = (ask.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 120.0) as f64;
+                let x = (ask.quantity / (max_quantity + max_quantity/4.0)) * (self.width - 20.0*self.dpi) as f64;
                 let y = ((ask.price - y_min) / (y_max - y_min)) * self.height as f64;
                 let y_top = self.height - y - height_per_line / 2.0;
-                context.fill_rect(108.0, y_top, x, height_per_line);
+                context.fill_rect(self.dpi*60.0, y_top, x, height_per_line);
             }
 
         }
         klines.last().map(|(_last_time, kline)| {
-            context.set_font("20px monospace");
+            context.set_font(&format!("{}px monospace", font_size));
             let y = ((kline.close - y_min) / (y_max - y_min)) * self.height as f64;
             let y_value_str = format!("{:.*}", decimals as usize, kline.close);
 
@@ -730,11 +740,11 @@ impl CanvasOrderbook {
             } else {
                 context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
             }
-            let rect_y = self.height - y - 40.0;
-            context.fill_rect(3.0, rect_y + 20.0, 90.0, 50.0); 
+            let rect_y = self.height - y - 15.0*self.dpi;
+            context.fill_rect(1.5*self.dpi, rect_y, 55.0*self.dpi, 30.0*self.dpi); 
 
             context.set_fill_style(&"black".into());
-            context.fill_text(&y_value_str, 6.0, self.height - y).unwrap();
+            context.fill_text(&y_value_str, 3.0*self.dpi, self.height - y).unwrap();
 
             let time_left = if kline.close_time < *last_depth_update.borrow() {
                 0
@@ -742,20 +752,16 @@ impl CanvasOrderbook {
                 (kline.close_time - *last_depth_update.borrow()) / 1000
             };
             let time_left_str = format!("{:02}:{:02}", time_left / 60, time_left % 60);
-            context.set_font("100 16px monospace");
-            context.fill_text(&time_left_str, 6.0, self.height - y + 20.0).unwrap(); 
+            context.set_font(&format!("{}px monospace", (font_size/1.4).round()));
+            context.fill_text(&time_left_str, 3.0*self.dpi, self.height - y + (12.0*self.dpi)).unwrap(); 
         });
-        let max_quantity_str = format!("{:.1}", max_quantity);
-        context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
-        context.set_font("18px monospace");
-        let text_metrics = context.measure_text(&max_quantity_str).unwrap();
-        context.fill_text(&max_quantity_str, self.width - text_metrics.width() - 6.0, 20.0).unwrap();
     } 
 }
 pub struct CanvasMain {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
+    dpi: f64,
     x_zoom: f64,
 }
 impl CanvasMain {
@@ -766,10 +772,12 @@ impl CanvasMain {
         match canvas.get_context("2d") {
             Ok(Some(context)) => {
                 let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                let dpi = window().unwrap().device_pixel_ratio();
                 Ok(Self {
                     ctx,
                     width,
                     height,
+                    dpi,
                     x_zoom: 30.0,
                 })
             },
@@ -780,6 +788,7 @@ impl CanvasMain {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+        self.dpi = window().unwrap().device_pixel_ratio();
     }
 
     pub fn render(&mut self, y_min: f64, y_max: f64, klines: &Vec<(&u64, &Kline)>, trades: Vec<(u64, GroupedTrades)>, multiplier: f64, num_possible_lines: f64) {
@@ -796,7 +805,7 @@ impl CanvasMain {
             }).fold(0.0, f64::max);
 
             let height_per_line = (self.height / num_possible_lines).round();
-            let font_size = (height_per_line / 2.0).round();
+            let font_size = ((height_per_line / 2.0)/self.dpi).round();
     
             for (_i, (_, kline)) in klines.iter().enumerate() {
                 let x: f64 = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
@@ -870,12 +879,12 @@ impl CanvasMain {
                 // time labels from kline.open_time
                 let text_height = 20.0 + 1.0 * 1.0; // font size + padding + margin
                 if kline.open_time % (MINUTE_IN_MS as u64) == 0 {
-                    context.set_font("20px monospace");
+                    context.set_font(&format!("{}px monospace", 12.0*self.dpi));
                     context.set_fill_style(&"rgba(200, 200, 200, 0.8)".into());
                     let hour = (kline.open_time / 3600000) % 24;
                     let minute = (kline.open_time / 60000) % 60;
                     let text_metrics = context.measure_text(&format!("{:02}:{:02}", hour, minute)).unwrap();
-                    context.fill_text(&format!("{:02}:{:02}", hour, minute), x + rect_width - text_metrics.width() / 2.0, self.height - text_height).unwrap();              
+                    context.fill_text(&format!("{:02}:{:02}", hour, minute), x + rect_width - text_metrics.width() / 2.0, self.height - ((text_height/2.0)*self.dpi)).unwrap();              
                 }        
             }
         }
@@ -885,6 +894,7 @@ pub struct CanvasIndicatorVolume {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
+    dpi: f64,
     x_zoom: f64,
 }
 impl CanvasIndicatorVolume {
@@ -895,10 +905,12 @@ impl CanvasIndicatorVolume {
         match canvas.get_context("2d") {
             Ok(Some(context)) => {
                 let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                let dpi = window().unwrap().device_pixel_ratio();
                 Ok(Self {
                     ctx,
                     width,
                     height,
+                    dpi,
                     x_zoom: 30.0,
                 })
             },
@@ -909,6 +921,7 @@ impl CanvasIndicatorVolume {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+        self.dpi = window().unwrap().device_pixel_ratio();
     }
 
     pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>) {
@@ -923,7 +936,8 @@ impl CanvasIndicatorVolume {
                 let max_volume = klines.iter().map(|(_, kline)| f64::max(kline.buy_volume, kline.sell_volume)).fold(0.0, f64::max);
                 let time_difference = **last_kline_open as f64 + MINUTE_IN_MS as f64 - zoom_scale;
 
-                context.set_font("20px monospace");
+                let font_size = (12.0 * self.dpi as f64).round();
+                context.set_font(&format!("{}px monospace", font_size));
                 for (_i, (_, kline)) in klines.iter().enumerate() {
                     let x = ((kline.open_time as f64 - time_difference) as f64 / zoom_scale) * self.width;
                 
@@ -937,7 +951,7 @@ impl CanvasIndicatorVolume {
                     context.fill_rect(x + 10.0, self.height as f64 - sell_height, rect_width - 10.0, sell_height);
 
                     if self.x_zoom < 18.0 {
-                        let text_height = 20.0 + 2.0 * 2.0; // font size + padding + margin            
+                        let text_height = font_size + 2.0 * 2.0; // font size + padding + margin            
                         context.set_fill_style(&"black".into());
                 
                         if buy_height > text_height {
@@ -959,6 +973,7 @@ pub struct CanvasIndiCVD {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
+    dpi: f64,
     x_zoom: f64,
 }
 impl CanvasIndiCVD {
@@ -969,10 +984,12 @@ impl CanvasIndiCVD {
         match canvas.get_context("2d") {
             Ok(Some(context)) => {
                 let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                let dpi = window().unwrap().device_pixel_ratio();
                 Ok(Self {
                     ctx,
                     width,
                     height,
+                    dpi,
                     x_zoom: 30.0,
                 })
             },
@@ -983,6 +1000,7 @@ impl CanvasIndiCVD {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+        self.dpi = window().unwrap().device_pixel_ratio();
     }
 
     pub fn render(&mut self, klines: &Vec<(&u64, &Kline)>, oi_obj: &Vec<&(u64, f64)>) {
@@ -1028,7 +1046,8 @@ impl CanvasIndiCVD {
                         let padding = self.height as f64 * padding_ratio / 2.0;
 
                         context.set_fill_style(&"white".into());
-                        context.set_font("20px monospace");
+                        let font_size = (12.0 * self.dpi as f64).round();
+                        context.set_font(&format!("{}px monospace", font_size));
 
                         let mut previous_oi = None;
 
@@ -1040,7 +1059,7 @@ impl CanvasIndiCVD {
                                 padded_height * (*oi - min_oi) / (max_oi - min_oi) + padding
                             };
                             context.begin_path();
-                            context.arc(x, self.height - y, 4.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+                            context.arc(x, self.height - y, 2.0*self.dpi, 0.0, 2.0 * std::f64::consts::PI).unwrap();
                             context.fill();
 
                             if let Some(prev_oi) = previous_oi {
@@ -1069,6 +1088,7 @@ pub struct CanvasBubbleTrades {
     ctx: CanvasRenderingContext2d,
     width: f64,
     height: f64,
+    dpi: f64,
     trades: Vec<Trade>,
     sell_trade_counts: BTreeMap<u64, usize>,
     buy_trade_counts: BTreeMap<u64, usize>,
@@ -1081,10 +1101,12 @@ impl CanvasBubbleTrades {
         match canvas.get_context("2d") {
             Ok(Some(context)) => {
                 let ctx = context.dyn_into::<CanvasRenderingContext2d>()?;
+                let dpi = window().unwrap().device_pixel_ratio();
                 Ok(Self {
                     ctx,
                     width,
                     height,
+                    dpi,
                     trades: Vec::new(),
                     sell_trade_counts: BTreeMap::new(),
                     buy_trade_counts: BTreeMap::new(),
@@ -1097,6 +1119,7 @@ impl CanvasBubbleTrades {
     pub fn resize(&mut self, new_width: f64, new_height: f64) {
         self.width = new_width;
         self.height = new_height;
+        self.dpi = window().unwrap().device_pixel_ratio();
     }
     pub fn reset(&mut self) {
         self.trades.clear();
@@ -1171,7 +1194,7 @@ impl CanvasBubbleTrades {
         }
         
         let max_quantity = self.trades.iter().map(|trade| trade.quantity).fold(0.0, f64::max);
-        let max_radius = 35.0;
+        let max_radius = 18.0*self.dpi;
         let y_min = self.trades.iter().map(|trade| trade.price).fold(f64::MAX, f64::min);
         let y_max = self.trades.iter().map(|trade| trade.price).fold(0.0, f64::max);
 
@@ -1180,7 +1203,7 @@ impl CanvasBubbleTrades {
 
         context.set_fill_style(&"rgba(192, 80, 77, 1)".into());
         for trade in &sell_trades {
-            let radius = ((trade.quantity / max_quantity) * 40.0).min(max_radius);    
+            let radius = ((trade.quantity / max_quantity) * 20.0 * self.dpi).min(max_radius);    
             if radius > 1.0 {
                 let x = ((trade.time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
                 let y = ((trade.price - y_min) / (y_max - y_min)) * padded_height + self.height * padding_percentage / 2.0;
@@ -1192,7 +1215,7 @@ impl CanvasBubbleTrades {
         }
         context.set_fill_style(&"rgba(81, 205, 160, 1)".into());
         for trade in &buy_trades {
-            let radius = ((trade.quantity / max_quantity) * 40.0).min(max_radius);
+            let radius = ((trade.quantity / max_quantity) * 20.0 * self.dpi).min(max_radius);
             if radius > 1.0 {
                 let x = ((trade.time - thirty_seconds_ago) as f64 / 30000.0) * self.width;
                 let y = ((trade.price - y_min) / (y_max - y_min)) * padded_height + self.height * padding_percentage / 2.0;
